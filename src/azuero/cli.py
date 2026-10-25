@@ -14,6 +14,11 @@ import sys
 
 STEPS: dict[str, str] = {
     "aoi": "azuero.aoi:cli",
+    "lidar": "azuero.io_lidar:cli",
+    "alphaearth": "azuero.io_alphaearth:cli",
+    "dem": "azuero.io_dem:cli",
+    "hls": "azuero.io_hls:cli",
+    "reference": "azuero.io_reference:cli",
 }
 
 
