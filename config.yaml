@@ -41,6 +41,7 @@ resources:
       alphaearth_read_level: 1           # 0 = native 10 m, 1 = 20 m overview
       one_year_stack_on_disk: true       # build/consume feature stacks one year at a time
       n_workers: 4
+      model_threads: 2                   # LightGBM/OpenMP threads (avoid oversubscription)
       max_mem_gb: 12
       inference_tile_px: 1024
       max_train_rows: 400000             # subsample training rows (null = all)
@@ -54,6 +55,7 @@ resources:
       alphaearth_read_level: 0
       one_year_stack_on_disk: false
       n_workers: 32
+      model_threads: 32
       max_mem_gb: 128
       inference_tile_px: 4096
       max_train_rows: null
