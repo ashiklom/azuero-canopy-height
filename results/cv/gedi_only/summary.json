@@ -1,0 +1,94 @@
+{
+  "height": {
+    "n": 183561,
+    "rmse": 5.672732783262079,
+    "mae": 4.139744021276107,
+    "bias": -0.04373535830135735,
+    "r2": 0.6526121740175239,
+    "r": 0.8078700699459759,
+    "slope_obs_on_pred": 0.9943293375957574,
+    "obs_mean": 13.794853591657665
+  },
+  "interval": {
+    "coverage": 0.8472170014327662,
+    "width": 15.144027894849232
+  },
+  "height_by_sensor": [
+    {
+      "n": 183561,
+      "rmse": 5.672732783262079,
+      "mae": 4.139744021276107,
+      "bias": -0.04373535830135735,
+      "r2": 0.6526121740175239,
+      "r": 0.8078700699459759,
+      "slope_obs_on_pred": 0.9943293375957574,
+      "obs_mean": 13.794853591657665,
+      "sensor": "gedi"
+    }
+  ],
+  "pair_change": {
+    "all": {
+      "rate_n": 6102,
+      "rate_rmse": 4.05355798236616,
+      "rate_mae": 2.452239588366596,
+      "rate_bias": 0.3525443865873436,
+      "rate_r2": -0.08564296942224381,
+      "rate_r": 0.08260885954535158,
+      "rate_slope_obs_on_pred": 0.2215448020420117,
+      "rate_obs_mean": -0.2802995123704638,
+      "delta_rmse": 6.993316327455217,
+      "delta_bias": 0.6082312550407771,
+      "delta_r": 0.1182832475658306,
+      "drop_n": 469,
+      "drop_recall": 0.0767590618336887,
+      "drop_precision": 0.1506276150627615,
+      "n_pairs": 6102
+    },
+    "gedi": {
+      "rate_n": 6102,
+      "rate_rmse": 4.05355798236616,
+      "rate_mae": 2.452239588366596,
+      "rate_bias": 0.3525443865873436,
+      "rate_r2": -0.08564296942224381,
+      "rate_r": 0.08260885954535158,
+      "rate_slope_obs_on_pred": 0.2215448020420117,
+      "rate_obs_mean": -0.2802995123704638,
+      "delta_rmse": 6.993316327455217,
+      "delta_bias": 0.6082312550407771,
+      "delta_r": 0.1182832475658306,
+      "drop_n": 469,
+      "drop_recall": 0.0767590618336887,
+      "drop_precision": 0.1506276150627615,
+      "n_pairs": 6102
+    }
+  },
+  "block_change": {
+    "block_n": 522,
+    "block_rmse": 2.6831394999983345,
+    "block_bias": 0.2427697411403325,
+    "block_r": 0.48755087605019976,
+    "block_obs_sd": 2.9788783581853227
+  },
+  "experiment": {
+    "name": "gedi_only",
+    "grid": "hls30",
+    "sets": [
+      "aef"
+    ],
+    "model": "lightgbm",
+    "design": "space",
+    "target": "h_cal",
+    "calibration": "qmap",
+    "sensors": [
+      "gedi"
+    ],
+    "weights": true,
+    "obs_covariates": false,
+    "block_km": null,
+    "model_params": {},
+    "seed": 0,
+    "panel": false
+  },
+  "minutes": 2.3862422863642374,
+  "n_folds": 5
+}
