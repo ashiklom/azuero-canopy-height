@@ -1,0 +1,101 @@
+# Azuero canopy height: project configuration.
+# Paths are relative to the repository root.
+
+paths:
+  data: data            # raw + intermediate data (gitignored)
+  results: results      # small committed tables / figures
+  site: docs            # static website (GitHub Pages)
+
+aoi:
+  # Azuero Peninsula: Herrera + Los Santos provinces, plus Mariato and the mainland of
+  # Montijo district (Veraguas), from geoBoundaries gbOpen PAN ADM2 (STRI 2012).
+  boundaries_url: https://media.githubusercontent.com/media/wmgeolab/geoBoundaries/main/releaseData/gbOpen/PAN/ADM2/geoBoundaries-PAN-ADM2.geojson
+  districts: [Chitré, Parita, Pesé, Los Pozos, Ocú, Las Minas, Santa María,
+              Pedasí, Pocrí, Tonosí, Las Tablas, Guararé, Macaracas, Los Santos,
+              Mariato, Montijo]
+  keep_largest_part: true   # drop islands (Coiba, Cébaco, ...)
+  buffer_m: 0
+
+crs: EPSG:32617  # UTM 17N
+
+# Named grids. Pixel edges are at integer multiples of `res` (origin 0,0).
+# hls30: HLS / Sentinel-2 MGRS 30 m grid. aef20: AlphaEarth native grid at its first
+# overview (20 m). aef10: AlphaEarth native 10 m grid (full profile only).
+grids:
+  hls30: {res: 30}
+  aef20: {res: 20}
+  aef10: {res: 10, profiles: [full]}
+primary_grid: hls30
+
+years: [2017, 2018, 2019, 2020, 2021, 2022, 2023, 2024, 2025]
+lidar_years: [2018, 2019, 2020, 2021, 2022, 2023, 2024, 2025]
+
+# Resource profiles. `small` captures accommodations for a 4-CPU / 15 GB RAM / ~30 GB
+# disk VM. Every key can be overridden individually under `resources.overrides` (or via
+# AZUERO_RESOURCES__<KEY>=value environment variables).
+resources:
+  profile: small        # small | full ; also AZUERO_PROFILE env var or --profile
+  presets:
+    small:
+      delete_raw_after_composite: true   # stream HLS/S1/EMIT/AVIRIS: download -> composite -> delete
+      alphaearth_read_level: 1           # 0 = native 10 m, 1 = 20 m overview
+      one_year_stack_on_disk: true       # build/consume feature stacks one year at a time
+      n_workers: 4
+      max_mem_gb: 12
+      inference_tile_px: 1024
+      max_train_rows: 400000             # subsample training rows (null = all)
+      hls_bands_subset: [BLUE, GREEN, RED, NIR, SWIR1, SWIR2]
+      hls_max_cloud_pct: 80
+      s1_max_scenes_per_month: 2
+      allow_gpu: false
+      run_large_models: false
+    full:
+      delete_raw_after_composite: false
+      alphaearth_read_level: 0
+      one_year_stack_on_disk: false
+      n_workers: 32
+      max_mem_gb: 128
+      inference_tile_px: 4096
+      max_train_rows: null
+      hls_bands_subset: [COASTAL, BLUE, GREEN, RED, NIR, SWIR1, SWIR2]
+      hls_max_cloud_pct: 100
+      s1_max_scenes_per_month: null
+      allow_gpu: true
+      run_large_models: true
+  overrides: {}
+
+gedi:
+  short_name: GEDI02_A
+  version: "002"
+  height_metric: rh98
+  min_sensitivity: 0.95
+  min_sensitivity_coverage_beam: 0.98
+
+icesat2:
+  # SlideRule atl03x + PhoREAL; along-track segments sized to the grid.
+  sliderule_url: slideruleearth.io
+  segment_len_m: 30
+  segment_res_m: 30
+  phoreal:
+    binsize: 1.0
+    geoloc: center
+    use_abs_h: false
+    send_waveform: false
+    above_classifier: false
+  atl08_class: [atl08_ground, atl08_canopy, atl08_top_of_canopy]
+  min_photons: 10
+  min_ground_photons: 3
+  canopy_percentile: 98
+
+cv:
+  block_km: 10
+  block_km_sensitivity: [5, 25]
+  n_folds: 5
+  regions_per_fold: 3          # each fold = several contiguous multi-block regions
+  buffer_km: 1.5
+  seed: 20251025
+
+model:
+  name: lightgbm
+  quantiles: [0.05, 0.5, 0.95]
+  interval_level: 0.90
