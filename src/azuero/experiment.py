@@ -181,24 +181,60 @@ def smooth_panel(panel: pd.DataFrame, years, params=None) -> pd.DataFrame:
     return out.reset_index().rename(columns={"level_2": "year"})
 
 
+SUBSETS = {
+    "all": lambda d: d,
+    "gedi": lambda d: d[d.sensor == "gedi"],
+    # The product is predicted on this measurement standard, so it is the fairest test
+    # of mapped heights and changes.
+    "gedi_night_power": lambda d: d[(d.sensor == "gedi") & d.night & d.strong],
+}
+
+
 def score_temporal_variants(oof, panel, out_dir, grid) -> dict:
-    """Score raw vs. smoothed annual predictions on height and change metrics."""
+    """Score three prediction variants on three label subsets.
+
+    oof          out-of-fold predictions conditioned on each observation's own sensor,
+                 illumination, beam and date (best for "what would this sensor see")
+    panel_raw    standardized annual predictions (GEDI power beam, night, mid-year) at
+                 held-out cells, i.e. what the map shows before temporal smoothing
+    panel_smooth the same after the robust Kalman smoother (the product)
+    Change metrics on `oof` partly reflect changing measurement conditions between the
+    two observations; the panel variants isolate canopy change.
+    """
     years = load_config()["years"]
     sm = smooth_panel(panel, years)
-    m = oof.merge(sm, left_on=[f"row_{grid}", f"col_{grid}", "year"],
-                  right_on=["row", "col", "year"], how="left")
-    res = {}
-    for name, col in (("raw", "pred"), ("smoothed", "pred_smooth")):
-        d = m.assign(pred=m[col])
-        d = d[np.isfinite(d.pred)]
-        pairs = change_pairs(d)
-        res[name] = {"height": height_metrics(d.h_cal, d.pred),
-                     "pair_change": pair_change_metrics(pairs) if len(pairs) else {},
-                     "block_change": block_change_metrics(block_change(d))}
-    pd.DataFrame({k: {**v["height"], **{f"pair_{a}": b for a, b in v["pair_change"].items()},
-                      **v["block_change"]} for k, v in res.items()}).to_csv(
-        out_dir / "temporal_variants.csv")
+    keys = [f"row_{grid}", f"col_{grid}", "year"]
+    m = oof.merge(panel[["row", "col", "year", "pred"]].rename(
+        columns={"row": keys[0], "col": keys[1], "pred": "pred_panel"}), on=keys, how="left")
+    m = m.merge(sm.rename(columns={"row": keys[0], "col": keys[1]}), on=keys, how="left")
+    res, rows = {}, []
+    for name, col in (("oof", "pred"), ("panel_raw", "pred_panel"), ("panel_smooth", "pred_smooth")):
+        for sub, fn in SUBSETS.items():
+            d = fn(m).assign(pred=lambda x: x[col])
+            d = d[np.isfinite(d.pred)]
+            pairs = change_pairs(d)
+            r = {"height": height_metrics(d.h_cal, d.pred),
+                 "pair_change": pair_change_metrics(pairs) if len(pairs) else {},
+                 "block_change": block_change_metrics(block_change(d))}
+            res[f"{name}|{sub}"] = r
+            rows.append({"variant": name, "subset": sub, **r["height"],
+                         **{f"pair_{a}": b for a, b in r["pair_change"].items()},
+                         **r["block_change"]})
+    pd.DataFrame(rows).to_csv(out_dir / "temporal_variants.csv", index=False)
     return res
+
+
+def rescore_temporal(name: str, grid: str) -> dict:
+    """Recompute temporal variants from saved OOF/panel predictions."""
+    oof = pd.read_parquet(data_path("cv", name, "oof.parquet"))
+    panel = pd.read_parquet(data_path("cv", name, "panel.parquet"))
+    out_dir = results_dir("cv", name)
+    v = score_temporal_variants(oof, panel, out_dir, grid)
+    sf = out_dir / "summary.json"
+    s = json.loads(sf.read_text())
+    s["variants"] = v
+    sf.write_text(json.dumps(s, indent=2, default=float))
+    return v
 
 
 def score(oof: pd.DataFrame, out_dir, target: str = "h_cal") -> dict:
@@ -260,3 +296,42 @@ def cli(argv=None) -> None:
     s = run(exp, a.force)
     print(json.dumps({k: s[k] for k in ("height", "interval", "pair_change", "block_change")},
                      indent=1, default=float))
+
+
+def tune_smoother(name: str, grid: str, tune_folds=("space0", "space1", "space2")) -> pd.DataFrame:
+    """Grid-search smoother parameters on some spatial folds, report on the others.
+
+    Objective (on GEDI night/power-beam labels): block change r + pair rate r +
+    drop recall - 0.1 * height RMSE, which balances height and change accuracy.
+    """
+    import itertools
+
+    from .temporal import SmootherParams
+
+    years = load_config()["years"]
+    oof = pd.read_parquet(data_path("cv", name, "oof.parquet"))
+    panel = pd.read_parquet(data_path("cv", name, "panel.parquet"))
+    oof = SUBSETS["gedi_night_power"](oof)
+    keys = [f"row_{grid}", f"col_{grid}", "year"]
+    cells = oof[keys[:2]].drop_duplicates().rename(columns={keys[0]: "row", keys[1]: "col"})
+    panel = panel.merge(cells, on=["row", "col"])
+    rows = []
+    grid_ = itertools.product([0.25 ** 2, 0.5 ** 2, 1.0 ** 2], [0.1 ** 2, 0.3 ** 2],
+                              [2.0, 2.5, 3.0], [0.5, 1.0])
+    for qh, qg, jz, rs in grid_:
+        p = SmootherParams(q_h=qh, q_g=qg, jump_z=jz, r_scale=rs)
+        sm = smooth_panel(panel, years, p).rename(columns={"row": keys[0], "col": keys[1]})
+        m = oof.merge(sm, on=keys, how="left")
+        for part, sel in (("tune", m.fold.isin(tune_folds)), ("test", ~m.fold.isin(tune_folds))):
+            d = m[sel].assign(pred=lambda x: x.pred_smooth)
+            d = d[np.isfinite(d.pred)]
+            hm = height_metrics(d.h_cal, d.pred)
+            pc = pair_change_metrics(change_pairs(d))
+            bc = block_change_metrics(block_change(d))
+            rows.append({"q_h": qh, "q_g": qg, "jump_z": jz, "r_scale": rs, "part": part,
+                         "rmse": hm["rmse"], "bias": hm["bias"], "pair_rate_r": pc.get("rate_r"),
+                         "drop_recall": pc.get("drop_recall"), "block_r": bc.get("block_r")})
+    df = pd.DataFrame(rows)
+    df["objective"] = df.block_r + df.pair_rate_r + df.drop_recall - 0.1 * df.rmse
+    df.to_csv(results_dir("cv", name) / "smoother_tuning.csv", index=False)
+    return df
