@@ -82,3 +82,10 @@ def results_path(*parts: str, mkdir: bool = True) -> Path:
     if mkdir:
         (p if not p.suffix else p.parent).mkdir(parents=True, exist_ok=True)
     return p
+
+
+def results_dir(*parts: str) -> Path:
+    """Directory under results/ (created)."""
+    p = path("results", *parts)
+    p.mkdir(parents=True, exist_ok=True)
+    return p

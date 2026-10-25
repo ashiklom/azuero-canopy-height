@@ -18,7 +18,7 @@ import pandas as pd
 
 from . import cv as cvmod
 from .calibration import apply as calibrate
-from .config import data_path, load_config, resources, results_path
+from .config import data_path, load_config, resources, results_dir, results_path
 from .features import training_table
 from .labels import load as load_labels
 from .metrics import (block_change, block_change_metrics, change_pairs, grouped,
@@ -74,7 +74,7 @@ def folds_for(exp: Experiment, lab: pd.DataFrame):
 
 
 def run(exp: Experiment, force: bool = False) -> dict:
-    out_dir = results_path("cv", exp.name, "x").parent
+    out_dir = results_dir("cv", exp.name)
     oof_f = data_path("cv", exp.name, "oof.parquet")
     if oof_f.exists() and (out_dir / "summary.json").exists() and not force:
         return json.loads((out_dir / "summary.json").read_text())
