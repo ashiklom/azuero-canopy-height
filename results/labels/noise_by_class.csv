@@ -1,0 +1,7 @@
+sensor,night,strong,n_pairs,sigma
+gedi,False,True,806,3.150312047717954
+gedi,True,True,763,3.2394226237623553
+icesat2,False,False,87,4.299789790651329
+icesat2,False,True,417,3.7097352601979647
+icesat2,True,False,795,1.4775865753184394
+icesat2,True,True,3725,2.078940675857574
