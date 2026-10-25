@@ -3,6 +3,8 @@
 * Hansen Global Forest Change v1.13 (2000-2025): `lossyear` (mode) and `treecover2000`
   (mean), used for stability screening of lidar pairs and as context. GFC is never
   used as a training target.
+* Global Airborne Observatory (Asner et al. 2013/2021) 1 ha top-of-canopy height for
+  Panama (2012 airborne lidar + satellite upscaling), used only for comparison.
 * Meta / WRI global 1 m canopy height (Tolan et al. 2024; mostly 2018-2020 Maxar imagery)
   and ETH global 10 m canopy height 2020 (Lang et al. 2023), used only for comparison
   with our product.
@@ -170,11 +172,32 @@ def build_eth(grid_names, force: bool = False) -> list[Path]:
     return list(files.values())
 
 
+# --- Global Airborne Observatory, Panama 2012 -------------------------------------------
+
+GAO_URL = ("https://zenodo.org/api/records/4624240/files/"
+           "Asner_GAO_Panama_CanopyHeight.tif/content")
+
+
+def build_gao(grid_names, force: bool = False) -> list[Path]:
+    grid_names = [grid_names] if isinstance(grid_names, str) else list(grid_names)
+    files = {g: data_path("interim", "reference", f"gao_tch_{g}.tif") for g in grid_names}
+    todo = [g for g in grid_names if force or not files[g].exists()]
+    if not todo:
+        return list(files.values())
+    local = _download(GAO_URL, data_path("raw", "reference", "Asner_GAO_Panama_CanopyHeight.tif"))
+    for g in todo:
+        out = np.full(get_grid(g).shape, np.nan, np.float32)
+        with rasterio.open(local) as src:
+            _warp_into(out, src, get_grid(g), Resampling.nearest, src_nodata=src.nodata)
+        _write(files[g], {"gao_tch_2012": out}, get_grid(g))
+    return list(files.values())
+
+
 def cli(argv=None) -> None:
     import argparse
 
     p = argparse.ArgumentParser(prog="azuero reference")
-    p.add_argument("--layers", nargs="*", default=["gfc", "eth", "meta"])
+    p.add_argument("--layers", nargs="*", default=["gfc", "eth", "meta", "gao"])
     p.add_argument("--grids", nargs="*", default=["hls30", "aef20"])
     p.add_argument("--force", action="store_true")
     a = p.parse_args(argv)
@@ -186,3 +209,5 @@ def cli(argv=None) -> None:
             build_eth(a.grids, a.force)
         elif layer == "meta":
             build_meta(a.grids, a.force)
+        elif layer == "gao":
+            build_gao(a.grids, a.force)
