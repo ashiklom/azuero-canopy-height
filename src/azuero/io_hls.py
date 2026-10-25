@@ -183,7 +183,7 @@ def composite_tile_year(year: int, tile: str, scenes: list[Scene], force=False,
         prof = dict(driver="GTiff", width=w, height=h, count=12 * nv, dtype="int16",
                     crs=grid.crs, transform=transform, nodata=FILL, tiled=True,
                     blockxsize=256, blockysize=256, compress="zstd", predictor=2,
-                    BIGTIFF="IF_SAFER")
+                    BIGTIFF="IF_SAFER", interleave="band")
         with rasterio.open(tmp_f, "w", **prof) as dst:
             dst.descriptions = tuple(f"{v}_m{m:02d}" for m in range(1, 13)
                                      for v in vars_ + ["count"])
@@ -243,7 +243,7 @@ def mosaic_monthly(year: int, tiles: list[str]) -> Path:
     f = data_path("interim", "hls", "hls30", f"hls_monthly_{year}.tif")
     prof = grid.profile(count=12 * nv, dtype="int16", nodata=FILL, tiled=True,
                         blockxsize=256, blockysize=256, compress="zstd", predictor=2,
-                        BIGTIFF="IF_SAFER")
+                        BIGTIFF="IF_SAFER", interleave="band")
     srcs = [rasterio.open(monthly_path(year, t)) for t in tiles if monthly_path(year, t).exists()]
     try:
         with rasterio.open(f, "w", **prof) as dst:
@@ -318,19 +318,46 @@ def annual_from_monthly(year: int, strip_rows: int = 512) -> Path:
     return f
 
 
-def build_year(year: int, force: bool = False) -> Path:
+def _new_aoi_pixels(bounds, covered: np.ndarray, grid) -> int:
+    """AOI pixels inside `bounds` not already covered by earlier tiles (marks them)."""
+    r0 = max(int(round((grid.ymax - bounds[3]) / 30)), 0)
+    r1 = min(int(round((grid.ymax - bounds[1]) / 30)), grid.height)
+    c0 = max(int(round((bounds[0] - grid.xmin) / 30)), 0)
+    c1 = min(int(round((bounds[2] - grid.xmin) / 30)), grid.width)
+    if r0 >= r1 or c0 >= c1:
+        return 0
+    sub = aoi_mask(grid)[r0:r1, c0:c1] & ~covered[r0:r1, c0:c1]
+    covered[r0:r1, c0:c1] |= aoi_mask(grid)[r0:r1, c0:c1]
+    return int(sub.sum())
+
+
+def build_year(year: int, force: bool = False, min_new_pixels: int = 1000) -> Path:
     f = data_path("interim", "hls", "hls30", f"hls_annual_{year}.tif")
     if f.exists() and not force:
         return f
+    res = resources()
+    grid = get_grid("hls30")
     scenes = search(year)
     tiles = sorted({s.tile for s in scenes}, key=lambda t: -sum(s.tile == t for s in scenes))
+    covered = np.zeros(grid.shape, bool)
+    probe = Downloader(data_path("tmp", "hls_probe"))
     used = []
     for t in tiles:
         ts = [s for s in scenes if s.tile == t]
+        bounds = tile_bounds(ts, probe, grid)
+        n_new = _new_aoi_pixels(bounds, covered, grid)
+        if n_new < min_new_pixels:
+            log.info("HLS %s %s: skipped (adds %d AOI pixels)", t, year, n_new)
+            continue
         if composite_tile_year(year, t, ts, force) is not None:
             used.append(t)
     mosaic_monthly(year, used)
-    return annual_from_monthly(year)
+    out = annual_from_monthly(year)
+    if res.delete_raw_after_composite:
+        for t in used:
+            monthly_path(year, t).unlink(missing_ok=True)
+        shutil.rmtree(data_path("tmp", "hls_probe"), ignore_errors=True)
+    return out
 
 
 def cli(argv=None) -> None:
