@@ -16,6 +16,7 @@ STEPS: dict[str, str] = {
     "aoi": "azuero.aoi:cli",
     "lidar": "azuero.io_lidar:cli",
     "alphaearth": "azuero.io_alphaearth:cli",
+    "aefctx": "azuero.io_alphaearth:context_cli",
     "dem": "azuero.io_dem:cli",
     "hls": "azuero.io_hls:cli",
     "reference": "azuero.io_reference:cli",
@@ -24,6 +25,8 @@ STEPS: dict[str, str] = {
     "labels": "azuero.labels:cli",
     "calibrate": "azuero.calibration:cli",
     "cv": "azuero.experiment:cli",
+    "change-model": "azuero.change_model:cli",
+    "report": "azuero.report:cli",
 }
 
 

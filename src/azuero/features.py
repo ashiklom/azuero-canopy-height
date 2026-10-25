@@ -2,6 +2,7 @@
 
 Feature sets (each optional, selected per experiment):
 * aef   - AlphaEarth 64-d annual embedding for the observation year (de-quantized).
+* aefctx - the embedding averaged over a ~90-100 m neighbourhood (spatial context).
 * dem   - Copernicus GLO-30 terrain (static).
 * hls   - HLS annual summaries for the observation year.
 * s1    - Sentinel-1 annual summaries for the observation year.
@@ -27,12 +28,14 @@ from .sample import band_names, sample_cells
 
 log = logging.getLogger(__name__)
 
-ALL_SETS = ["aef", "dem", "hls", "s1", "av3", "time"]
+ALL_SETS = ["aef", "aefctx", "dem", "hls", "s1", "av3", "time"]
 
 
 def raster_for(set_name: str, grid: str, year: int) -> Path | None:
     if set_name == "aef":
         return data_path("interim", "alphaearth", grid, f"aef_{year}.tif", mkdir=False)
+    if set_name == "aefctx":
+        return data_path("interim", "alphaearth", grid, f"aefctx_{year}.tif", mkdir=False)
     if set_name == "dem":
         return data_path("interim", "dem", f"terrain_{grid}.tif", mkdir=False)
     if set_name == "hls":
@@ -45,6 +48,8 @@ def raster_for(set_name: str, grid: str, year: int) -> Path | None:
 def names_for(set_name: str, grid: str) -> list[str]:
     if set_name == "aef":
         return [f"A{i:02d}" for i in range(64)]
+    if set_name == "aefctx":
+        return [f"C{i:02d}" for i in range(64)]
     if set_name == "time":
         return ["t"]
     if set_name == "av3":
@@ -69,10 +74,10 @@ def _cells_on(grid: str, src_grid: str, rows, cols):
 
 
 def sample_set(set_name: str, grid: str, year: int, rows, cols) -> np.ndarray:
-    if set_name == "aef":
+    if set_name in ("aef", "aefctx"):
         from .io_alphaearth import dequantize
 
-        f = raster_for("aef", grid, year)
+        f = raster_for(set_name, grid, year)
         raw = sample_cells(f, rows, cols, out_dtype=np.int16)
         return dequantize(raw.astype(np.int8))
     if set_name in ("hls", "s1"):
@@ -150,7 +155,7 @@ def stack_window(grid: str, sets: list[str], year: int, win: Window,
                 a = src.read(window=win).astype(np.float32)
                 if src.nodata is not None and not np.isnan(src.nodata):
                     a[a == src.nodata] = np.nan
-        if s == "aef":
+        if s in ("aef", "aefctx"):
             from .io_alphaearth import dequantize
             a = dequantize(np.where(np.isnan(a), -128, a).astype(np.int8))
         feats.append(a)

@@ -179,3 +179,53 @@ def cli(argv=None) -> None:
     a = p.parse_args(argv)
     for y in a.years or load_config()["years"]:
         build_year(y, tuple(a.grids), a.force)
+
+
+CONTEXT_RADIUS_M = 45.0  # ~90-100 m windows: 3x3 at 30 m, 5x5 at 20 m
+
+
+def context_path(year: int, grid_name: str) -> Path:
+    return data_path("interim", "alphaearth", grid_name, f"aefctx_{year}.tif")
+
+
+def build_context(year: int, grid_name: str, force: bool = False) -> Path:
+    """Neighbourhood-mean embedding (valid-pixel weighted) around each cell.
+
+    Adds spatial context and absorbs lidar geolocation error (GEDI ~10 m).
+    """
+    from scipy import ndimage
+
+    f = context_path(year, grid_name)
+    if f.exists() and not force:
+        return f
+    grid = get_grid(grid_name)
+    r = max(int(round(CONTEXT_RADIUS_M / grid.res)), 1)
+    size = 2 * r + 1
+    with rasterio.open(stack_path(year, grid_name)) as src:
+        arr = src.read()
+    valid = (arr[0] != NODATA).astype(np.float32)
+    wsum = ndimage.uniform_filter(valid, size=size, mode="constant")
+    out = np.empty_like(arr)
+    for b in range(NBANDS):
+        x = np.nan_to_num(dequantize(arr[b]))
+        m = ndimage.uniform_filter(x * valid, size=size, mode="constant")
+        with np.errstate(all="ignore"):
+            out[b] = quantize(np.where(wsum > 0.3, m / wsum, np.nan))
+    out[:, valid == 0] = NODATA
+    _write(f, out, grid)
+    return f
+
+
+def context_cli(argv=None) -> None:
+    import argparse
+
+    from .config import load_config
+
+    p = argparse.ArgumentParser(prog="azuero aefctx")
+    p.add_argument("--years", type=int, nargs="*", default=None)
+    p.add_argument("--grids", nargs="*", default=["hls30", "aef20"])
+    a = p.parse_args(argv)
+    for y in a.years or load_config()["years"]:
+        for g in a.grids:
+            build_context(y, g)
+            log.info("context %s %s done", g, y)
