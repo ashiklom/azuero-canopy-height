@@ -1,0 +1,12 @@
+# Raw and intermediate data (regenerable from scripts)
+/data/
+# Python
+__pycache__/
+*.pyc
+.venv/
+.pytest_cache/
+*.egg-info/
+# Local
+.netrc
+*.log
+.DS_Store
