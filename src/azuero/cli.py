@@ -19,6 +19,11 @@ STEPS: dict[str, str] = {
     "dem": "azuero.io_dem:cli",
     "hls": "azuero.io_hls:cli",
     "reference": "azuero.io_reference:cli",
+    "s1": "azuero.io_s1:cli",
+    "airborne": "azuero.io_airborne:cli",
+    "labels": "azuero.labels:cli",
+    "calibrate": "azuero.calibration:cli",
+    "cv": "azuero.experiment:cli",
 }
 
 
