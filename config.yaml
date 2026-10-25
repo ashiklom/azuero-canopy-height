@@ -44,7 +44,7 @@ resources:
       max_mem_gb: 12
       inference_tile_px: 1024
       max_train_rows: 400000             # subsample training rows (null = all)
-      hls_bands_subset: [BLUE, GREEN, RED, NIR, SWIR1, SWIR2]
+      hls_bands_subset: [RED, NIR, SWIR1, SWIR2]
       hls_max_cloud_pct: 80
       s1_max_scenes_per_month: 2
       allow_gpu: false
@@ -57,7 +57,7 @@ resources:
       max_mem_gb: 128
       inference_tile_px: 4096
       max_train_rows: null
-      hls_bands_subset: [COASTAL, BLUE, GREEN, RED, NIR, SWIR1, SWIR2]
+      hls_bands_subset: [BLUE, GREEN, RED, NIR, SWIR1, SWIR2]
       hls_max_cloud_pct: 100
       s1_max_scenes_per_month: null
       allow_gpu: true
@@ -85,6 +85,7 @@ icesat2:
   atl08_class: [atl08_ground, atl08_canopy, atl08_top_of_canopy]
   min_photons: 10
   min_ground_photons: 3
+  max_msw_flag: 3        # ATL08 multiple-scattering (cloud) flag; screened later by GEDI agreement
   canopy_percentile: 98
 
 cv:
