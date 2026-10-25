@@ -27,6 +27,9 @@ STEPS: dict[str, str] = {
     "cv": "azuero.experiment:cli",
     "change-model": "azuero.change_model:cli",
     "report": "azuero.report:cli",
+    "ssm-cv": "azuero.ssm.cv:cli",
+    "product": "azuero.predict:cli",
+    "site": "azuero.site:cli",
 }
 
 
