@@ -93,11 +93,14 @@ class Operator:
     bias_sd: float        # SD of the persistent per-pixel bias (m)
 
     def predict(self, feats: np.ndarray, static: np.ndarray) -> np.ndarray:
-        """feats: (..., nvars), static: (..., nstatic) broadcastable."""
+        """feats: (..., nvars), static: (..., nstatic) broadcastable. Predictions are made
+        on the product's measurement standard (GEDI power beam at night), like v1."""
         shp = feats.shape[:-1]
+        n = int(np.prod(shp))
         X = np.concatenate([feats.reshape(-1, feats.shape[-1]),
                             np.broadcast_to(static, shp + static.shape[-1:]).reshape(
-                                -1, static.shape[-1])], axis=1)
+                                -1, static.shape[-1]),
+                            np.tile(STANDARD, (n, 1))], axis=1)
         ok = np.isfinite(X[:, 0])
         out = np.full(X.shape[0], np.nan, np.float32)
         if ok.any():
@@ -105,15 +108,21 @@ class Operator:
         return out.reshape(shp)
 
 
+# Observation covariates (is_icesat2, night, strong) and the standard used for prediction.
+STANDARD = np.array([[0.0, 1.0, 1.0]], np.float32)
+
+
 def training_rows(labels: pd.DataFrame, family: str, static: np.ndarray):
-    """Features for lidar labels at their own month."""
+    """Features for lidar labels at their own month, plus observation covariates."""
     months = labels["time"].dt.month.to_numpy()
     feats = np.full((len(labels), len(FAMILIES[family]["vars"])), np.nan, np.float32)
     for y, idx in labels.groupby("year").indices.items():
         sub = labels.iloc[idx]
         feats[idx] = sample_monthly(family, int(y), sub.row_hls30.to_numpy(),
                                     sub.col_hls30.to_numpy(), months[idx])
-    X = np.concatenate([feats, static], axis=1)
+    cov = np.column_stack([(labels.sensor == "icesat2").to_numpy(np.float32),
+                           labels.night.to_numpy(np.float32), labels.strong.to_numpy(np.float32)])
+    X = np.concatenate([feats, static, cov], axis=1)
     return X
 
 

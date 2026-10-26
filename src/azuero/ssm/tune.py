@@ -32,9 +32,9 @@ log = logging.getLogger(__name__)
 
 GRID = {
     "jump_types": [("lidar", "annual"), ("lidar", "annual", "optical")],
-    "jump_z": [2.5, 3.5],
+    "jump_z": [3.0],
     "q_h": [0.4 ** 2, 1.0 ** 2],
-    "r_opt": [1.0, 2.0, 4.0],
+    "r_opt": [1.0, 2.0, 4.0, 8.0],
 }
 
 
@@ -52,7 +52,7 @@ def objective(d: pd.DataFrame) -> dict:
 
 
 def run(v1: str = "v1_aef20", name: str = "ssm_tuning", step_months: int = 1,
-        cells_per_fold: int = 25000, seed: int = 0,
+        cells_per_fold: int = 60000, seed: int = 0,
         tune_folds=("space0", "space1", "space2")) -> pd.DataFrame:
     years = load_config()["years"]
     grid = json.loads(results_path("cv", v1, "summary.json").read_text())["experiment"]["grid"]
@@ -108,7 +108,7 @@ def cli(argv=None) -> None:
     p.add_argument("--v1", default="v1_aef20")
     p.add_argument("--name", default="ssm_tuning")
     p.add_argument("--step-months", type=int, default=1)
-    p.add_argument("--cells", type=int, default=25000)
+    p.add_argument("--cells", type=int, default=60000)
     a = p.parse_args(argv)
     df = run(a.v1, a.name, a.step_months, a.cells)
     t = df[df.part == "tune"].sort_values("objective", ascending=False)
