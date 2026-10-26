@@ -19,5 +19,6 @@ tag v0.1-setup       adcc6de "Stage 1: project setup (config, resource profiles,
 tag v0.2-data        0d95ffd "Stage 2: data loaders (lidar, AlphaEarth, DEM, HLS, AVIRIS-3, references); S1 loader follows in cf5c9e2"
 tag v0.3-labels      408f1d7 "Stage 3: lidar QC, stability screening, sensor harmonization"
 tag v0.4-cv-baseline ae041bb "Stage 4: CV framework and AlphaEarth baseline"
+tag v0.5-model       5016fbf "Stage 5: ablations, uncertainty calibration, temporal smoothing; final configuration v1_aef20"
 
 git push "$remote" --tags
