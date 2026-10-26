@@ -219,12 +219,13 @@ def finalize(name: str, grid_name: str, cqr_name: str, smooth_series: bool = Tru
 
 # Web distribution layers: name -> (source band, scale, dtype, nodata, aggregation factor).
 # Height keeps the native grid; the SD is spatially smooth and is block-averaged to ~100 m;
-# lower/upper bounds are height -/+ 1.645 SD, and change SDs come from the published
+# change is block-averaged too (its pixel-level 1-year SD is 6-9 m, so ~100 m is the
+# finest meaningful scale); lower/upper bounds are height -/+ 1.645 SD, and change SDs come from the published
 # lookup table, so neither is stored separately.
 COMPACT = {
     "height": ("height", 0.5, "uint8", 255, 1),
     "sd": ("sd", 0.1, "uint8", 255, 5),
-    "change": ("change", 0.1, "int8", -128, 1),
+    "change": ("change", 0.1, "int8", -128, 5),
 }
 
 

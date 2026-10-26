@@ -573,8 +573,9 @@ on the 20 m AlphaEarth grid, uint8 × 0.5 m, nodata 255;</li>
 <li><code>azuero_canopy_height_YEAR_sd.tif</code>: calibrated 1 SD of height, averaged to
 100 m, uint8 × 0.1 m. The 90 % interval is height ± 1.645 SD;</li>
 <li><code>azuero_canopy_height_YEAR_change.tif</code>: change from the previous year
-(smoothed), int8 × 0.1 m, nodata −128. Its 1 SD is given in the change-uncertainty table
-above.</li>
+(smoothed), averaged to 100 m, int8 × 0.1 m, nodata −128. Pixel-level annual change is too
+uncertain to publish at 20 m (see the change-uncertainty table); averaging over 25 pixels
+reduces random error, although errors are spatially correlated.</li>
 </ul>
 <p>Quality flag by year: 0 = lidar year (2019–2025), 1 = partial lidar year (2018),
 2 = no lidar (2017). The full-precision rasters (int16 × 0.01 m, all bands) are

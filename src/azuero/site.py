@@ -85,7 +85,7 @@ def map_layers(product: str, grid_name: str, res_m: float = 100.0):
                    "unit": "m", "colors": GREEN_SEQ},
         "sd": {"band": 4, "kind": "sd", "vmin": 2, "vmax": 9, "label": "Uncertainty (1 SD)",
                "unit": "m", "colors": ORANGE_SEQ},
-        "change": {"band": 5, "kind": "change", "vmin": -10, "vmax": 10,
+        "change": {"band": 5, "kind": "change", "vmin": -3, "vmax": 3,
                    "label": "Change from previous year", "unit": "m", "colors": DIVERGING},
     }
     bounds = None
@@ -110,8 +110,11 @@ def map_layers(product: str, grid_name: str, res_m: float = 100.0):
                     # 8-bit palette (64 colours + transparency) keeps overlays small.
                     alpha = img.getchannel("A")
                     pimg = img.convert("RGB").quantize(colors=63, method=Image.Quantize.MEDIANCUT)
+                    pal = (pimg.getpalette() or [])[:63 * 3]
+                    pal += [0] * (63 * 3 - len(pal)) + [0, 0, 0]  # index 63 = transparent
+                    pimg.putpalette(pal)
                     pimg.paste(63, mask=alpha.point(lambda v: 255 if v == 0 else 0))
-                    pimg.save(out / f"{key}_{y}.png", optimize=True, transparency=63)
+                    pimg.save(out / f"{key}_{y}.png", optimize=False, transparency=63)
     layers = {}
     for key, s in spec.items():
         layers[key] = {"label": s["label"], "unit": s["unit"], "colors": s["colors"],
