@@ -51,8 +51,19 @@ def to_hls30(grid: str, rows, cols):
     return get_grid("hls30").rowcol(x, y)
 
 
+def monthly_features(cells: pd.DataFrame, years, use: tuple, grid: str) -> dict:
+    """Monthly HLS/S1 features + static terrain for all cells (sampled once per fold)."""
+    rows, cols = to_hls30(grid, cells.row.to_numpy(), cells.col.to_numpy())
+    out = {"static": static_features(rows, cols)}
+    for fam in ("optical", "radar"):
+        if fam in use:
+            out[fam] = operators.sample_all_months(fam, years, rows, cols)
+    return out
+
+
 def assemble(cells: pd.DataFrame, panel: pd.DataFrame, ops: dict, years, step_months: int,
-             cqr_offsets: pd.DataFrame, gedi_sigma: float, use: tuple, grid: str = "hls30"):
+             cqr_offsets: pd.DataFrame, gedi_sigma: float, use: tuple, grid: str = "hls30",
+             feats: dict | None = None):
     """Observation arrays (n_cells, T) for the SSM."""
     n = len(cells)
     T = 12 * len(years) // step_months
@@ -73,17 +84,17 @@ def assemble(cells: pd.DataFrame, panel: pd.DataFrame, ops: dict, years, step_mo
             A[:, t_idx] = pred
             V[:, t_idx] = np.maximum(sd ** 2 - gedi_sigma ** 2, 1.0)
         obs["annual"] = (A, V)
-    rows, cols = to_hls30(grid, cells.row.to_numpy(), cells.col.to_numpy())
-    static = static_features(rows, cols)
+    feats = feats or monthly_features(cells, years, use, grid)
+    static = feats["static"]
     for fam in ("optical", "radar"):
         if fam not in use or fam not in ops:
             continue
-        feats = operators.sample_all_months(fam, years, rows, cols)       # (n, 12Y, nv)
-        pred = ops[fam].predict(feats, static[:, None, :])                 # (n, 12Y)
+        fm = feats[fam]                                                    # (n, 12Y, nv)
+        pred = ops[fam].predict(fm, static[:, None, :])                    # (n, 12Y)
         if step_months > 1:
             pred = np.nanmean(pred.reshape(n, T, step_months), axis=2)
             var = ops[fam].var_noise / np.maximum(
-                np.isfinite(feats[..., 0]).reshape(n, T, step_months).sum(2), 1)
+                np.isfinite(fm[..., 0]).reshape(n, T, step_months).sum(2), 1)
         else:
             var = np.full_like(pred, ops[fam].var_noise)
         var = np.where(np.isfinite(pred), var, np.nan)
@@ -138,9 +149,11 @@ def run(v1: str, name: str = "ssm", step_months: int = 1, use=("annual", "optica
             cells = cells[[t in keep for t in map(tuple, cells.to_numpy())]].reset_index(drop=True)
         fp = panel[panel.fold == f.name]
         H = np.full((len(cells), 12 * len(years) // step_months), np.nan, np.float32)
+        allf = monthly_features(cells, years, use, grid)
         for c0 in range(0, len(cells), chunk):
             cc = cells.iloc[c0:c0 + chunk].reset_index(drop=True)
-            obs, T = assemble(cc, fp, ops, years, step_months, cqr, gedi_sigma, use, grid)
+            fc = {k: v[c0:c0 + chunk] for k, v in allf.items()}
+            obs, T = assemble(cc, fp, ops, years, step_months, cqr, gedi_sigma, use, grid, fc)
             xs, _ = kf_run(obs, T, step_months / 12, params)
             H[c0:c0 + chunk] = xs[:, :, 0]
         pred = score_fold(held, cells, H, years, step_months, grid)
