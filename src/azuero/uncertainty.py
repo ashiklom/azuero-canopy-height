@@ -142,9 +142,10 @@ def calibrate_change_sd(name: str, grid: str, max_dt: float = 1.5) -> pd.DataFra
 
 def change_sd_lookup(name: str, height: np.ndarray) -> np.ndarray:
     t = pd.read_csv(results_path("uncertainty", name, "change_sd.csv"))
-    b = pd.cut(height, CHANGE_BINS, labels=False)
+    h = np.asarray(height, float)
+    b = np.asarray(pd.cut(h.ravel(), CHANGE_BINS, labels=False), float).reshape(h.shape)
     vals = t.set_index("bin").change_sd.reindex(range(len(CHANGE_BINS) - 1)).to_numpy()
-    out = np.full(height.shape, np.nan)
+    out = np.full(h.shape, np.nan)
     ok = np.isfinite(b)
     out[ok] = vals[b[ok].astype(int)]
     return out
