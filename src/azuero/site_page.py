@@ -142,9 +142,9 @@ def render(ctx: dict) -> str:
     tun = results_path("cv", final, "smoother_tuning.csv")
     sm_cfg = cfg["model"].get("smoother", {})
     ssm_rows = []
-    for nm, lab in (("ssm_monthly", "Monthly SSM (v1 annual + HLS + S1)"),
-                    ("ssm_3monthly", "3-monthly SSM (v1 annual + HLS + S1)"),
-                    ("ssm_annual_only", "Monthly SSM, v1 annual predictions only")):
+    for nm, lab in (("ssm_monthly", "v2: monthly SSM (v1 annual + anchored HLS + S1), tuned"),
+                    ("ssm_3monthly", "v2: 3-monthly SSM (v1 annual + anchored HLS + S1), tuned"),
+                    ("ssm_annual_only", "v2: monthly SSM, v1 annual predictions only")):
         f = results_path("cv", nm, "summary_subsets.json")
         if f.exists():
             for sub, r in json.loads(f.read_text()).items():
@@ -539,9 +539,27 @@ way the filter does not treat 108 correlated monthly errors as independent evide
 Disturbances use the same robust jump mechanism as version 1. In cross-validation, the
 held-out cells' lidar is withheld and the smoothed monthly height is scored at each
 held-out observation's month.</p>
+<p><strong>Development.</strong> The first monthly runs were biased low by about
+0.65 m. Tuning the jump rules did not fix this. Neither did adding the observation
+covariates to the operators (−0.55 m), nor removing seasonal offsets between the
+operators and the v1 annual predictions (−0.6 m). The cause was attenuation: the
+HLS/S1 operators are weaker predictors, so they pull tall canopies down and short
+canopies up, and the lidar test labels skew tall. The final design anchors each
+operator per pixel: its time-mean is replaced by the v1 annual level, so HLS and
+Sentinel-1 contribute only temporal anomalies. No lidar is used for the anchoring.
+The remaining parameters (operator variance scale 0.25, level process noise 1 m²/yr,
+jumps triggered by lidar or annual observations at 3σ) were tuned on folds 0–2 and
+checked on folds 3–4 (<code>results/cv/ssm_tuning/</code>).</p>
 {ssm_html or '<p class="muted">Results pending.</p>'}
 <p class="small muted">All rows are scored on held-out GEDI night power-beam shots,
 with no held-out lidar used by any model.</p>
+<p><strong>Conclusion.</strong> Once anchored so that they cannot bias the level, the
+monthly HLS and Sentinel-1 observations add no measurable skill for height or annual
+change over the annual AlphaEarth-based predictions; all differences are within a few
+hundredths. The published product therefore stays version 1. The state-space model
+would add value where lidar exists at a pixel, because it can assimilate those shots
+directly. That benefit cannot be measured with held-out-region CV, which by design has
+no lidar at the evaluated cells.</p>
 </section>
 
 <section id="limitations">
