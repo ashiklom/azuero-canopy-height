@@ -75,6 +75,7 @@ def map_layers(product: str, grid_name: str, res_m: float = 60.0):
     from rasterio.warp import transform_bounds
 
     from .figures import DIVERGING, GREEN_SEQ, ORANGE_SEQ, colorize
+    from .predict import PRODUCT_NODATA, PRODUCT_SCALE
 
     out = SITE / "data" / "map"
     out.mkdir(parents=True, exist_ok=True)
@@ -99,11 +100,12 @@ def map_layers(product: str, grid_name: str, res_m: float = 60.0):
                 ll = transform_bounds("EPSG:3857", "EPSG:4326", *b)
                 bounds = [[ll[1], ll[0]], [ll[3], ll[2]]]
             with WarpedVRT(src, crs="EPSG:3857", transform=tr, width=w, height=hgt,
-                           resampling=Resampling.average, nodata=np.nan) as vrt:
+                           resampling=Resampling.average, src_nodata=PRODUCT_NODATA,
+                           nodata=np.nan, dtype="float32") as vrt:
                 for key, s in spec.items():
                     if key == "change" and y == years[0]:
                         continue
-                    a = vrt.read(s["band"])
+                    a = vrt.read(s["band"]) * PRODUCT_SCALE
                     Image.fromarray(colorize(a, s["kind"], s["vmin"], s["vmax"])).save(
                         out / f"{key}_{y}.png", optimize=True)
     layers = {}

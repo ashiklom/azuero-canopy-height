@@ -38,6 +38,19 @@ from .uncertainty import apply_offsets
 log = logging.getLogger(__name__)
 
 
+PRODUCT_SCALE = 0.01
+PRODUCT_NODATA = -32768
+
+
+def read_product(path, band=None) -> np.ndarray:
+    """Read product band(s) as float32 metres (NaN for nodata)."""
+    with rasterio.open(path) as src:
+        a = src.read(band) if band else src.read()
+    out = a.astype(np.float32) * PRODUCT_SCALE
+    out[a == PRODUCT_NODATA] = np.nan
+    return out
+
+
 def model_path(name: str) -> Path:
     return data_path("models", f"{name}.joblib")
 
@@ -128,8 +141,10 @@ def finalize(name: str, grid_name: str, cqr_name: str, smooth_series: bool = Tru
         return list(outs.values())
     srcs = {y: rasterio.open(raw_path(name, y)) for y in years}
     bands = ("height", "lower90", "upper90", "sd", "change", "change_sd", "flag")
-    prof = grid.profile(count=len(bands), dtype="float32", nodata=np.nan, tiled=True,
-                        blockxsize=256, blockysize=256, compress="zstd", predictor=3,
+    # Stored as int16 with scale 0.01 (cm precision; nodata -32768), which halves the
+    # size of float32 without losing meaningful precision. Read with `read_product`.
+    prof = grid.profile(count=len(bands), dtype="int16", nodata=PRODUCT_NODATA, tiled=True,
+                        blockxsize=256, blockysize=256, compress="zstd", predictor=2,
                         interleave="band")
     dsts = {y: rasterio.open(outs[y].with_suffix(".part.tif"), "w", **prof) for y in years}
     for d in dsts.values():
@@ -175,7 +190,8 @@ def finalize(name: str, grid_name: str, cqr_name: str, smooth_series: bool = Tru
                 arr = np.stack([H_t, np.clip(H_t - z * S[:, t], 0, None), H_t + z * S[:, t],
                                 S[:, t], dH[:, t], dS[:, t], fl]).reshape(len(bands), h, w)
                 arr[:, ~np.isfinite(P[:, t]).reshape(h, w) & ~any_ok.reshape(h, w)] = np.nan
-                dsts[y].write(arr.astype(np.float32), window=win)
+                q = np.where(np.isfinite(arr), np.round(arr / PRODUCT_SCALE), PRODUCT_NODATA)
+                dsts[y].write(np.clip(q, -32767, 32767).astype(np.int16), window=win)
     finally:
         for d in dsts.values():
             d.close()
@@ -183,6 +199,11 @@ def finalize(name: str, grid_name: str, cqr_name: str, smooth_series: bool = Tru
             s.close()
     for y in years:
         outs[y].with_suffix(".part.tif").rename(outs[y])
+        with rasterio.open(outs[y], "r+") as d:
+            d.scales = (PRODUCT_SCALE,) * len(bands)
+    if resources().delete_raw_after_composite:
+        for y in years:
+            raw_path(name, y).unlink(missing_ok=True)
     (data_path("product", name) / "product.json").write_text(json.dumps(
         {"grid": grid_name, "years": years, "bands": bands, "interval_level": level,
          "smoothed": smooth_series, "cqr": cqr_name}, indent=2))
@@ -208,8 +229,8 @@ def compact_cogs(name: str, out_dir: Path) -> list[Path]:
     outs = []
     for f in sorted(data_path("product", name).glob("canopy_height_*.tif")):
         year = f.stem.split("_")[-1]
+        a = read_product(f)
         with rasterio.open(f) as src:
-            a = src.read()
             names = src.descriptions
             prof = src.profile
         # One dtype per file is required; store the signed change band in a separate COG.
@@ -246,12 +267,11 @@ def product_stats(name: str) -> pd.DataFrame:
     """Peninsula-wide summaries per year (committed to results/product)."""
     rows = []
     for y in load_config()["years"]:
-        with rasterio.open(data_path("product", name, f"canopy_height_{y}.tif")) as src:
-            h = src.read(1)
-            sd = src.read(4)
-            ch = src.read(5)
+        f = data_path("product", name, f"canopy_height_{y}.tif")
+        h, sd, ch = (read_product(f, b) for b in (1, 4, 5))
+        with rasterio.open(f) as src:
+            px_ha = (src.res[0] * src.res[1]) / 1e4
         ok = np.isfinite(h)
-        px_ha = (src.res[0] * src.res[1]) / 1e4
         rows.append({"year": y, "mean_height": float(np.nanmean(h)),
                      "median_height": float(np.nanmedian(h)),
                      "area_ge_10m_kha": float((h[ok] >= 10).sum() * px_ha / 1e3),
@@ -292,8 +312,7 @@ def reference_comparison(name: str, grid_name: str) -> pd.DataFrame:
             continue
         with rasterio.open(f) as src:
             r = src.read(1)
-        with rasterio.open(data_path("product", name, f"canopy_height_{year}.tif")) as src:
-            p = src.read(1)
+        p = read_product(data_path("product", name, f"canopy_height_{year}.tif"), 1)
         both = np.isfinite(r) & np.isfinite(p)
         rc = block_mean(np.where(both, r, np.nan), k)
         pc = block_mean(np.where(both, p, np.nan), k)
