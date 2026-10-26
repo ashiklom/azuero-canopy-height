@@ -51,6 +51,7 @@ def find_pairs(a: pd.DataFrame, b: pd.DataFrame, radius: float, max_dt: float,
         "h_a": a["h"].to_numpy()[p.ia], "h_b": b["h"].to_numpy()[p.ib],
         "t1": ta[p.ia], "t2": tb[p.ib], "dist": p.dist, "dt": p.dt,
         "row": a["row_hls30"].to_numpy()[p.ia], "col": a["col_hls30"].to_numpy()[p.ia],
+        "row20": a["row_aef20"].to_numpy()[p.ia], "col20": a["col_aef20"].to_numpy()[p.ia],
     })
     for c in CLASS_COLS:
         out[f"{c}_a"] = a[c].to_numpy()[p.ia]
@@ -72,19 +73,21 @@ def robust_sigma(d: np.ndarray) -> float:
     return float(1.4826 * np.median(np.abs(d - np.median(d))))
 
 
-def run(radius: float = 20.0, max_dt: float = 1.0, n_boot: int = 200) -> pd.DataFrame:
+def run(radius: float = 20.0, max_dt: float = 1.0, n_boot: int = 200, suffix: str = "") -> pd.DataFrame:
+    """Fit the calibration. A non-empty `suffix` writes to separate files (for comparisons)
+    without replacing the tables that `apply` uses."""
     df = load()
     g = df[df.sensor == "gedi"].reset_index(drop=True)
     i = df[df.sensor == "icesat2"].reset_index(drop=True)
 
     cross = screen_pairs(find_pairs(i, g, radius, max_dt))
-    cross.to_parquet(data_path("labels", "pairs_cross.parquet"))
+    cross.to_parquet(data_path("labels", f"pairs_cross{suffix}.parquet"))
 
     # Same-sensor repeat pairs (stable) for noise estimates.
     noise_rows = []
     for name, sub in (("gedi", g), ("icesat2", i)):
         rp = screen_pairs(find_pairs(sub, sub, radius, max_dt, same=True))
-        rp.to_parquet(data_path("labels", f"pairs_repeat_{name}.parquet"))
+        rp.to_parquet(data_path("labels", f"pairs_repeat_{name}{suffix}.parquet"))
         st = rp[rp.stable]
         for key, grp in st.groupby([f"{c}_a" for c in CLASS_COLS] + [f"{c}_b" for c in CLASS_COLS]):
             na, sa, nb, sb = key
@@ -93,7 +96,7 @@ def run(radius: float = 20.0, max_dt: float = 1.0, n_boot: int = 200) -> pd.Data
             noise_rows.append({"sensor": name, "night": na, "strong": sa, "n_pairs": len(grp),
                                "sigma": robust_sigma(grp.h_a - grp.h_b) / np.sqrt(2)})
     noise = pd.DataFrame(noise_rows)
-    noise.to_csv(results_path("labels", "noise_by_class.csv"), index=False)
+    noise.to_csv(results_path("labels", f"noise_by_class{suffix}.csv"), index=False)
     sig_g = float(np.average(noise.query("sensor == 'gedi'").sigma,
                              weights=noise.query("sensor == 'gedi'").n_pairs))
 
@@ -117,7 +120,7 @@ def run(radius: float = 20.0, max_dt: float = 1.0, n_boot: int = 200) -> pd.Data
                          "median_diff_raw": float(np.median(x - y)),
                          "r_raw": float(np.corrcoef(x, y)[0, 1])})
     cal = pd.DataFrame(rows)
-    cal.to_csv(results_path("labels", "calibration.csv"), index=False)
+    cal.to_csv(results_path("labels", f"calibration{suffix}.csv"), index=False)
     # Quantile mapping per class (stable pairs): monotone map matching the marginal
     # distributions of collocated ICESat-2 and GEDI heights.
     qs = np.linspace(0.01, 0.99, 99)
@@ -127,10 +130,10 @@ def run(radius: float = 20.0, max_dt: float = 1.0, n_boot: int = 200) -> pd.Data
         qg = np.quantile(grp.h_b, qs)
         for q_, a_, b_ in zip(qs, qi, qg):
             qrows.append({"night": night, "strong": strong, "q": q_, "h_is2": a_, "h_gedi": b_})
-    pd.DataFrame(qrows).to_csv(results_path("labels", "quantile_map.csv"), index=False)
+    pd.DataFrame(qrows).to_csv(results_path("labels", f"quantile_map{suffix}.csv"), index=False)
     screen = cross[["flag_aef", "flag_gfc", "flag_hls", "flag_s1", "stable"]].mean()
     screen["n_pairs"] = len(cross)
-    screen.to_frame("value").to_csv(results_path("labels", "pair_screening.csv"))
+    screen.to_frame("value").to_csv(results_path("labels", f"pair_screening{suffix}.csv"))
     log.info("calibration:\n%s", cal.round(3))
     return cal
 

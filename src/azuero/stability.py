@@ -31,7 +31,8 @@ from .sample import band_names, sample_cells
 log = logging.getLogger(__name__)
 
 THRESHOLDS = {"hls_dnbr": 0.10, "s1_dvh_db": 1.5}
-GRID = "hls30"
+GRID = "aef20"      # AlphaEarth / GFC / ETH screening grid
+OPT_GRID = "hls30"  # HLS / Sentinel-1 composites live on the 30 m grid
 
 
 def _aef_path(year):
@@ -64,9 +65,9 @@ def annual_band(rows, cols, years, kind: str, band: str) -> dict[int, np.ndarray
     out = {}
     for y in years:
         if kind == "hls":
-            f = data_path("interim", "hls", GRID, f"hls_annual_{y}.tif", mkdir=False)
+            f = data_path("interim", "hls", OPT_GRID, f"hls_annual_{y}.tif", mkdir=False)
         else:
-            f = data_path("interim", "s1", GRID, f"s1_annual_{y}.tif", mkdir=False)
+            f = data_path("interim", "s1", OPT_GRID, f"s1_annual_{y}.tif", mkdir=False)
         if f.exists():
             i = band_names(f).index(band) + 1
             out[y] = sample_cells(f, rows, cols, bands=[i])[:, 0]
@@ -99,9 +100,11 @@ def reference_threshold(pct: float = 2.0) -> float:
 
 def screen_pairs(pairs: pd.DataFrame) -> pd.DataFrame:
     """Add change indicators and a `stable` flag to a table with columns
-    row, col, t1, t2 (decimal years)."""
-    rows = pairs["row"].to_numpy()
-    cols = pairs["col"].to_numpy()
+    row, col (30 m cells), row20, col20 (20 m cells), t1, t2 (decimal years)."""
+    rows = pairs["row20"].to_numpy()
+    cols = pairs["col20"].to_numpy()
+    rows30 = pairs["row"].to_numpy()
+    cols30 = pairs["col"].to_numpy()
     y1 = np.floor(np.minimum(pairs["t1"], pairs["t2"])).astype(int).to_numpy()
     y2 = np.floor(np.maximum(pairs["t1"], pairs["t2"])).astype(int).to_numpy()
     years = list(range(y1.min(), y2.max() + 1))
@@ -121,7 +124,7 @@ def screen_pairs(pairs: pd.DataFrame) -> pd.DataFrame:
     out["gfc_loss_in_span"] = (lossyear >= y1) & (lossyear <= y2)
 
     for kind, band, name in (("hls", "NBR_p50", "hls_dnbr"), ("s1", "vh_p50", "s1_dvh_db")):
-        vals = annual_band(rows, cols, years, kind, band)
+        vals = annual_band(rows30, cols30, years, kind, band)
         dmax = np.full(len(pairs), np.nan)
         for y in years:
             if y in vals and y + 1 in vals:
