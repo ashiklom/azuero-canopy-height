@@ -31,10 +31,10 @@ from .kalman import SSMParams
 log = logging.getLogger(__name__)
 
 GRID = {
-    "jump_types": [("lidar", "annual"), ("lidar", "annual", "optical")],
+    "jump_types": [("lidar", "annual")],
     "jump_z": [3.0],
-    "q_h": [0.4 ** 2, 1.0 ** 2],
-    "r_opt": [1.0, 2.0, 4.0, 8.0],
+    "q_h": [1.0 ** 2],
+    "r_opt": [0.5, 1.0, 2.0, 4.0],
 }
 
 

@@ -63,12 +63,13 @@ def monthly_features(cells: pd.DataFrame, years, use: tuple, grid: str) -> dict:
 
 def assemble(cells: pd.DataFrame, panel: pd.DataFrame, ops: dict, years, step_months: int,
              cqr_offsets: pd.DataFrame, gedi_sigma: float, use: tuple, grid: str = "hls30",
-             feats: dict | None = None):
+             feats: dict | None = None, anchor: bool = True):
     """Observation arrays (n_cells, T) for the SSM."""
     n = len(cells)
     T = 12 * len(years) // step_months
     z = norm.ppf(0.95)
     obs = {}
+    annual_by_year = np.full((n, len(years)), np.nan, np.float32)
     if "annual" in use:
         A = np.full((n, T), np.nan, np.float32)
         V = np.full((n, T), np.nan, np.float32)
@@ -82,6 +83,7 @@ def assemble(cells: pd.DataFrame, panel: pd.DataFrame, ops: dict, years, step_mo
             sd = (hi2 - lo2) / (2 * z)
             t_idx = (yi * 12 + 6) // step_months
             A[:, t_idx] = pred
+            annual_by_year[:, yi] = pred
             V[:, t_idx] = np.maximum(sd ** 2 - gedi_sigma ** 2, 1.0)
         obs["annual"] = (A, V)
     feats = feats or monthly_features(cells, years, use, grid)
@@ -98,8 +100,28 @@ def assemble(cells: pd.DataFrame, panel: pd.DataFrame, ops: dict, years, step_mo
         else:
             var = np.full_like(pred, ops[fam].var_noise)
         var = np.where(np.isfinite(pred), var, np.nan)
+        if anchor and "annual" in obs:
+            pred = anchor_to_annual(pred, annual_by_year, years, step_months)
         obs[fam] = (pred.astype(np.float32), var.astype(np.float32))
     return obs, T
+
+
+def anchor_to_annual(pred: np.ndarray, annual_by_year: np.ndarray, years, step_months: int
+                     ) -> np.ndarray:
+    """Remove each calendar period's mean offset between an operator and the v1 annual
+    predictions (computed across all cells, no lidar involved). The operators then carry
+    within- and between-year variation rather than their own level, which is biased for
+    months that are poorly represented in the lidar training data (cloudy wet season)."""
+    n, T = pred.shape
+    per_year = 12 // step_months
+    ref = np.repeat(annual_by_year, per_year, axis=1)[:, :T]
+    out = pred.copy()
+    for k in range(per_year):
+        cols = np.arange(k, T, per_year)
+        off = np.nanmean(pred[:, cols] - ref[:, cols])
+        if np.isfinite(off):
+            out[:, cols] -= off
+    return out
 
 
 def score_fold(held: pd.DataFrame, cells: pd.DataFrame, H: np.ndarray, years, step_months,
