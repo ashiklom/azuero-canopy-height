@@ -50,6 +50,18 @@ class SSMParams:
     h_max: float = 60.0
     jump_types: tuple = JUMP_TYPES
 
+    @classmethod
+    def from_config(cls) -> "SSMParams":
+        from ..config import load_config
+
+        c = load_config().get("ssm", {})
+        ro = c.get("r_opt", 1.0)
+        bsd = c.get("bias_prior_sd", 1.0)
+        return cls(q_h=c.get("q_h", 0.16), jump_z=c.get("jump_z", 2.5),
+                   jump_types=tuple(c.get("jump_types", JUMP_TYPES)),
+                   b0_sd={"optical": bsd, "radar": bsd},
+                   r_scale={"lidar": 1.0, "annual": 1.0, "optical": ro, "radar": ro})
+
 
 def run(obs: dict, T: int, dt: float, p: SSMParams, h0=None, return_cov: bool = False):
     """Filter + smooth.

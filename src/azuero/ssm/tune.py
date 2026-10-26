@@ -34,7 +34,7 @@ GRID = {
     "jump_types": [("lidar", "annual")],
     "jump_z": [3.0],
     "q_h": [1.0 ** 2],
-    "r_opt": [0.5, 1.0, 2.0, 4.0],
+    "r_opt": [0.25, 0.5, 1.0, 2.0, 4.0],
 }
 
 
@@ -78,7 +78,9 @@ def run(v1: str = "v1_aef20", name: str = "ssm_tuning", step_months: int = 1,
         feats = monthly_features(cells, years, use, grid)
         obs, T = assemble(cells, panel[panel.fold == f.name], ops, years, step_months, cqr,
                           gedi_sigma, use, grid, feats)
-        base = SSMParams(b0_sd={k: ops[k].bias_sd for k in ops})
+        # Operators are anchored per pixel to the v1 level, so the bias states only need to
+        # absorb slow drift.
+        base = SSMParams(b0_sd={k: 1.0 for k in ops})
         keep = held.set_index([f"row_{grid}", f"col_{grid}"]).index.isin(
             pd.MultiIndex.from_frame(cells[["row", "col"]]))
         held = held[keep]

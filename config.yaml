@@ -106,3 +106,12 @@ model:
   t_min_predict: 2019.3   # time feature floor for mapping pre-GEDI years (see predict.py)
   # Robust Kalman smoother, tuned on spatial folds 0-2 (results/cv/v1_aef20/smoother_tuning.csv)
   smoother: {q_h: 1.0, q_g: 0.09, jump_z: 3.0, r_scale: 0.5}
+
+# Version 2 monthly state-space model (azuero.ssm). r_opt scales the optical/radar
+# observation variances; operators are anchored per pixel to the v1 annual level.
+ssm:
+  q_h: 1.0
+  jump_z: 3.0
+  jump_types: [lidar, annual]
+  r_opt: 1.0
+  bias_prior_sd: 1.0

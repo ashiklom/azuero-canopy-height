@@ -108,19 +108,30 @@ def assemble(cells: pd.DataFrame, panel: pd.DataFrame, ops: dict, years, step_mo
 
 def anchor_to_annual(pred: np.ndarray, annual_by_year: np.ndarray, years, step_months: int
                      ) -> np.ndarray:
-    """Remove each calendar period's mean offset between an operator and the v1 annual
-    predictions (computed across all cells, no lidar involved). The operators then carry
-    within- and between-year variation rather than their own level, which is biased for
-    months that are poorly represented in the lidar training data (cloudy wet season)."""
+    """Make an operator carry temporal anomalies only.
+
+    1. Remove each calendar period's mean offset to the v1 annual predictions, computed
+       across all cells (seasonal operator bias; months poorly represented in the lidar
+       training data).
+    2. Remove each pixel's time-mean offset (the operator's attenuation toward the mean,
+       which a weaker predictor shows for tall and short canopies).
+    The level at every pixel then comes from the v1 annual model, and HLS/S1 inform the
+    timing and size of changes. No lidar is used, so this is valid inside CV.
+    """
     n, T = pred.shape
     per_year = 12 // step_months
     ref = np.repeat(annual_by_year, per_year, axis=1)[:, :T]
+    off = pred - ref
     out = pred.copy()
     for k in range(per_year):
         cols = np.arange(k, T, per_year)
-        off = np.nanmean(pred[:, cols] - ref[:, cols])
-        if np.isfinite(off):
-            out[:, cols] -= off
+        so = np.nanmean(off[:, cols])
+        if np.isfinite(so):
+            out[:, cols] -= so
+            off[:, cols] -= so
+    with np.errstate(all="ignore"):
+        pix = np.nanmean(off, axis=1)
+    out -= np.nan_to_num(pix)[:, None]
     return out
 
 
@@ -160,7 +171,7 @@ def run(v1: str, name: str = "ssm", step_months: int = 1, use=("annual", "optica
         seed: int = 0) -> dict:
     cfg = load_config()
     years = cfg["years"]
-    params = params or SSMParams()
+    params = params or SSMParams.from_config()
     lab = calibrate(load_labels()).reset_index(drop=True)
     oof = pd.read_parquet(data_path("cv", v1, "oof.parquet"))
     panel = pd.read_parquet(data_path("cv", v1, "panel.parquet"))
@@ -182,7 +193,7 @@ def run(v1: str, name: str = "ssm", step_months: int = 1, use=("annual", "optica
                 ops[fam] = operators.fit(train, fam, stat_tr, train.sigma.to_numpy())
                 op_info.append({"fold": f.name, "family": fam, "noise_sd": np.sqrt(ops[fam].var_noise),
                                 "bias_sd": ops[fam].bias_sd})
-                params.b0_sd[fam] = ops[fam].bias_sd
+
         cells = panel[panel.fold == f.name][["row", "col"]].drop_duplicates().reset_index(drop=True)
         if max_cells and len(cells) > max_cells:
             keep = set(map(tuple, held[[f"row_{grid}", f"col_{grid}"]].drop_duplicates().sample(
