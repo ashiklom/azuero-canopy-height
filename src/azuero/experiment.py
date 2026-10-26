@@ -176,7 +176,7 @@ def smooth_panel(panel: pd.DataFrame, years, params=None) -> pd.DataFrame:
     wide = panel.pivot_table(index=["row", "col"], columns="year", values=["pred", "lo", "hi"])
     P = wide["pred"].reindex(columns=years).to_numpy()
     S = ((wide["hi"] - wide["lo"]) / (2 * z)).reindex(columns=years).to_numpy()
-    h, sd, g = smooth(P, np.clip(S, 0.5, None), params or SmootherParams())
+    h, sd, g = smooth(P, np.clip(S, 0.5, None), params or SmootherParams.from_config())
     out = pd.DataFrame(h, index=wide.index, columns=years).stack().rename("pred_smooth")
     return out.reset_index().rename(columns={"level_2": "year"})
 

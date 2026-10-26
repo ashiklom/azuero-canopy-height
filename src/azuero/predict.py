@@ -157,7 +157,7 @@ def finalize(name: str, grid_name: str, cqr_name: str, smooth_series: bool = Tru
                 # The smoother treats annual predictions as observations of the latent
                 # height with the model's error variance (lidar noise removed).
                 s_model = np.sqrt(np.maximum(sd_obs[any_ok] ** 2 - gedi_sigma ** 2, 1.0))
-                h_s, sd_s, g_s, Ps, lag = smooth(P[any_ok], s_model, params or SmootherParams(),
+                h_s, sd_s, g_s, Ps, lag = smooth(P[any_ok], s_model, params or SmootherParams.from_config(),
                                                  return_cov=True)
                 H[any_ok] = h_s
                 # Report intervals for a GEDI-equivalent measurement: add lidar noise back.

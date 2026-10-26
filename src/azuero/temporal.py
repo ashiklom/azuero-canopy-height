@@ -33,6 +33,12 @@ class SmootherParams:
     g0_sd: float = 1.0         # prior SD of the initial growth rate (m/yr)
     h_max: float = 60.0
 
+    @classmethod
+    def from_config(cls) -> "SmootherParams":
+        from .config import load_config
+
+        return cls(**load_config()["model"].get("smoother", {}))
+
 
 def smooth(z: np.ndarray, s: np.ndarray, p: SmootherParams = SmootherParams(),
            return_cov: bool = False):
