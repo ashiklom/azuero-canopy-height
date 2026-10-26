@@ -22,5 +22,6 @@ tag v0.4-cv-baseline ae041bb "Stage 4: CV framework and AlphaEarth baseline"
 tag v0.5-model       5016fbf "Stage 5: ablations, uncertainty calibration, temporal smoothing; final configuration v1_aef20"
 tag v1.0-product     dda0b48 "Stage 6: final 20 m product 2017-2025 with calibrated uncertainty"
 tag v1.0-site        2b36d93 "Stage 7: static website and web COGs"
+tag v2.0-ssm         9d7e33d "Stage 8: monthly state-space model (evaluated against v1; site updated)"
 
 git push "$remote" --tags

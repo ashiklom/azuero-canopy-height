@@ -36,8 +36,10 @@ The following did not improve held-out accuracy and are reported as ablations:
 - AVIRIS-3 (AVUELO) spectroscopy;
 - an MLP in place of LightGBM.
 
-A monthly state-space model (version 2, `azuero.ssm`) is evaluated against version 1
-on the website.
+A monthly state-space model (version 2, `azuero.ssm`) assimilates the v1 annual
+predictions together with monthly HLS and Sentinel-1 observation operators. Once tuned
+and anchored, it matches version 1 (RMSE 5.51 vs 5.50 m; block-change r 0.62 vs 0.61) but
+does not improve on it, so the published product is version 1.
 
 Web products are in `docs/data/cogs/`. For each year there is canopy height (20 m),
 a calibrated SD (100 m) and annual change (100 m). Full-precision rasters are
