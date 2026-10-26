@@ -11,8 +11,40 @@ Accuracy is assessed with cross-validation that holds out several contiguous reg
 lidar data, and separately whole years. Two quantities are scored: absolute height, and
 annual height change.
 
-Methods, results and an interactive map are on the project website, which is served
-from `docs/`.
+**Website:** <https://ashiklom.github.io/azuero-canopy-height/>. It has the methods,
+results and an interactive map, and is served by GitHub Pages from `main:/docs`. To
+enable Pages: Settings → Pages → Deploy from a branch → `main` / `/docs`.
+
+## Results (version 1)
+
+The final model is LightGBM on AlphaEarth embeddings, a time trend, terrain and
+observation covariates. It runs on the native 20 m AlphaEarth grid, followed by a
+robust per-pixel Kalman smoother. Accuracy is from spatial-region cross-validation (five
+folds of contiguous held-out regions, with buffers):
+
+| metric | value |
+|---|---|
+| height RMSE vs held-out GEDI | 5.5 m (R² 0.67, bias ≈ 0) |
+| 90 % interval coverage (conformal, cross-fitted) | 90.0 % |
+| year-to-year change in 2 km block means, r (map vs GEDI night power beams) | 0.61 |
+| pixel-level 1-year change SD (empirical) | 6–9 m |
+
+Whole-year hold-outs (leave-one-year-out, space × time) cost little accuracy.
+The following did not improve held-out accuracy and are reported as ablations:
+- context embeddings;
+- HLS and Sentinel-1 predictors;
+- AVIRIS-3 (AVUELO) spectroscopy;
+- an MLP in place of LightGBM.
+
+A monthly state-space model (version 2, `azuero.ssm`) is evaluated against version 1
+on the website.
+
+Web products are in `docs/data/cogs/`. For each year there is canopy height (20 m),
+a calibrated SD (100 m) and annual change (100 m). Full-precision rasters are
+regenerated with `azuero product v1_aef20`.
+
+Stage tags are created by `scripts/tag_stages.sh`, because tag pushes were not possible
+from the development environment.
 
 ## Layout
 
