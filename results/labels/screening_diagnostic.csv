@@ -1,0 +1,9 @@
+check,flagged,pairs,median_abs_diff_m,mean_abs_diff_m
+aef,False,3744,3.563,5.395
+aef,True,100,2.572,4.534
+gfc,False,3834,3.539,5.369
+gfc,True,10,6.509,6.507
+hls,False,3341,3.549,5.44
+hls,True,503,3.509,4.925
+s1,False,3768,3.552,5.394
+s1,True,76,3.13,4.281
