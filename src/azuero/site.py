@@ -212,8 +212,12 @@ def render_context(final: str, product: str | None, cqr: str | None) -> dict:
     if cd.exists():
         extra["change_direct"] = json.loads(cd.read_text())["pair_change"]
     R = results_json(final, extra)
+    import geopandas as gpd
+
+    aoi_km2 = float(gpd.read_file(results_path("aoi.geojson")).to_crs(
+        load_config()["crs"]).area.sum() / 1e6)
     return {"final": final, "summary": s, "experiments": exps, "R": R, "cfg": load_config(),
-            "product": product}
+            "product": product, "aoi_km2": aoi_km2}
 
 
 def cli(argv=None) -> None:

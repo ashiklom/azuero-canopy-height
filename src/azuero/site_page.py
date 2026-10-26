@@ -7,6 +7,7 @@ import json
 import numpy as np
 import pandas as pd
 
+from .config import results_path
 from .site import esc, f1
 
 
@@ -69,11 +70,11 @@ def render(ctx: dict) -> str:
     years = cfg["years"]
 
     # ---- tables
-    qc = pd.read_csv("results/labels/qc_counts.csv")
-    noise = pd.read_csv("results/labels/noise_by_class.csv")
-    cal = pd.read_csv("results/labels/calibration.csv").query("pairs == 'stable_pairs'")
-    screen = pd.read_csv("results/labels/pair_screening.csv", index_col=0)["value"]
-    thr = pd.read_csv("results/labels/aef_stability_threshold.csv").iloc[0]
+    qc = pd.read_csv(results_path("labels", "qc_counts.csv"))
+    noise = pd.read_csv(results_path("labels", "noise_by_class.csv"))
+    cal = pd.read_csv(results_path("labels", "calibration.csv")).query("pairs == 'stable_pairs'")
+    screen = pd.read_csv(results_path("labels", "pair_screening.csv"), index_col=0)["value"]
+    thr = pd.read_csv(results_path("labels", "aef_stability_threshold.csv")).iloc[0]
 
     noise_t = noise.assign(
         sensor=noise.sensor.map({"gedi": "GEDI", "icesat2": "ICESat-2"}),
@@ -163,7 +164,7 @@ def render(ctx: dict) -> str:
 <h1>Annual canopy height for the Azuero Peninsula, Panama, 2017–2025</h1>
 <p class="lede">An annual, gridded {int(ctx['cfg']['grids'][ctx['cfg']['primary_grid']]['res'])} m
 canopy-height product with per-pixel uncertainty for the Azuero Peninsula
-({esc(f1(7533.6, 0))} km²). Spaceborne lidar from GEDI and ICESat-2 supplies the labels:
+({f1(ctx['aoi_km2'], 0)} km²). Spaceborne lidar from GEDI and ICESat-2 supplies the labels:
 {nlab:,} quality-screened observations, harmonized to the GEDI rh98 scale. The
 <a href="https://deepmind.google/discover/blog/alphaearth-foundations-helps-map-our-planet-in-unprecedented-detail/">AlphaEarth
 Foundations</a> annual satellite embeddings, plus supporting predictors, map those labels
