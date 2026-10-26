@@ -37,12 +37,22 @@ from .kalman import SSMParams, run as kf_run
 log = logging.getLogger(__name__)
 
 
-def static_features(rows, cols) -> np.ndarray:
-    return sample_cells(data_path("interim", "dem", "terrain_hls30.tif"), rows, cols)
+def static_features(rows, cols, grid: str = "hls30") -> np.ndarray:
+    return sample_cells(data_path("interim", "dem", f"terrain_{grid}.tif"), rows, cols)
+
+
+def to_hls30(grid: str, rows, cols):
+    """Cells of `grid` -> containing hls30 cells (HLS/S1 composites live on hls30)."""
+    if grid == "hls30":
+        return np.asarray(rows), np.asarray(cols)
+    from ..grid import get_grid
+
+    x, y = get_grid(grid).xy(np.asarray(rows), np.asarray(cols))
+    return get_grid("hls30").rowcol(x, y)
 
 
 def assemble(cells: pd.DataFrame, panel: pd.DataFrame, ops: dict, years, step_months: int,
-             cqr_offsets: pd.DataFrame, gedi_sigma: float, use: tuple):
+             cqr_offsets: pd.DataFrame, gedi_sigma: float, use: tuple, grid: str = "hls30"):
     """Observation arrays (n_cells, T) for the SSM."""
     n = len(cells)
     T = 12 * len(years) // step_months
@@ -63,7 +73,7 @@ def assemble(cells: pd.DataFrame, panel: pd.DataFrame, ops: dict, years, step_mo
             A[:, t_idx] = pred
             V[:, t_idx] = np.maximum(sd ** 2 - gedi_sigma ** 2, 1.0)
         obs["annual"] = (A, V)
-    rows, cols = cells.row.to_numpy(), cells.col.to_numpy()
+    rows, cols = to_hls30(grid, cells.row.to_numpy(), cells.col.to_numpy())
     static = static_features(rows, cols)
     for fam in ("optical", "radar"):
         if fam not in use or fam not in ops:
@@ -81,9 +91,10 @@ def assemble(cells: pd.DataFrame, panel: pd.DataFrame, ops: dict, years, step_mo
     return obs, T
 
 
-def score_fold(held: pd.DataFrame, cells: pd.DataFrame, H: np.ndarray, years, step_months):
+def score_fold(held: pd.DataFrame, cells: pd.DataFrame, H: np.ndarray, years, step_months,
+               grid: str = "hls30"):
     pos = pd.Series(np.arange(len(cells)), index=pd.MultiIndex.from_frame(cells[["row", "col"]]))
-    ci = pos.reindex(pd.MultiIndex.from_arrays([held.row_hls30, held.col_hls30])).to_numpy()
+    ci = pos.reindex(pd.MultiIndex.from_arrays([held[f"row_{grid}"], held[f"col_{grid}"]])).to_numpy()
     m = held.time.dt.month.to_numpy() - 1
     ti = ((held.year.to_numpy() - years[0]) * 12 + m) // step_months
     ok = np.isfinite(ci)
@@ -104,6 +115,7 @@ def run(v1: str, name: str = "ssm", step_months: int = 1, use=("annual", "optica
     cqr = pd.read_csv(results_path("uncertainty", v1, "cqr_offsets.csv"))
     gedi_sigma = pd.read_csv(results_path("labels", "noise_by_class.csv")).query(
         "sensor == 'gedi'").sigma.mean()
+    grid = json.loads(results_path("cv", v1, "summary.json").read_text())["experiment"]["grid"]
     folds = spatial_folds(lab)
     out = []
     op_info = []
@@ -121,17 +133,17 @@ def run(v1: str, name: str = "ssm", step_months: int = 1, use=("annual", "optica
                 params.b0_sd[fam] = ops[fam].bias_sd
         cells = panel[panel.fold == f.name][["row", "col"]].drop_duplicates().reset_index(drop=True)
         if max_cells and len(cells) > max_cells:
-            keep = set(map(tuple, held[["row_hls30", "col_hls30"]].drop_duplicates().sample(
+            keep = set(map(tuple, held[[f"row_{grid}", f"col_{grid}"]].drop_duplicates().sample(
                 max_cells, random_state=seed).to_numpy()))
             cells = cells[[t in keep for t in map(tuple, cells.to_numpy())]].reset_index(drop=True)
         fp = panel[panel.fold == f.name]
         H = np.full((len(cells), 12 * len(years) // step_months), np.nan, np.float32)
         for c0 in range(0, len(cells), chunk):
             cc = cells.iloc[c0:c0 + chunk].reset_index(drop=True)
-            obs, T = assemble(cc, fp, ops, years, step_months, cqr, gedi_sigma, use)
+            obs, T = assemble(cc, fp, ops, years, step_months, cqr, gedi_sigma, use, grid)
             xs, _ = kf_run(obs, T, step_months / 12, params)
             H[c0:c0 + chunk] = xs[:, :, 0]
-        pred = score_fold(held, cells, H, years, step_months)
+        pred = score_fold(held, cells, H, years, step_months, grid)
         out.append(held.assign(pred=pred, fold=f.name))
         log.info("%s %s: cells=%d held=%d rmse=%.2f", name, f.name, len(cells), len(held),
                  np.sqrt(np.nanmean((pred - held.h_cal) ** 2)))
