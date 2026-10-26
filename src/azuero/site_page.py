@@ -49,6 +49,11 @@ EXPERIMENT_LABELS = {
     "aef_av3": "AlphaEarth + AVIRIS-3",
     "base_year": "AlphaEarth, leave-one-year-out",
     "base_spacetime": "AlphaEarth, space × time hold-out",
+    "obscov_time": "AlphaEarth + time + observation covariates",
+    "obscov_time_dem": "AlphaEarth + time + terrain + observation covariates (30 m)",
+    "v1_hls30": "Final features on the 30 m HLS grid",
+    "v1_aef20": "Final: AlphaEarth + time + terrain + observation covariates (20 m)",
+    "v1_hls_s1": "Final + HLS + Sentinel-1 (20 m)",
     "base_block5": "AlphaEarth, 5 km blocks",
     "base_block25": "AlphaEarth, 25 km blocks",
 }
@@ -62,9 +67,7 @@ def render(ctx: dict) -> str:
     exps: pd.DataFrame = ctx["experiments"]
     hs = {r["sensor"]: r for r in s["height_by_sensor"]}
     g = hs.get("gedi", {})
-    tv = R.get("temporal", {})
-    sm = tv.get("smoothed", {})
-    raw = tv.get("raw", {})
+    var = s.get("variants", {})
     cqr = R.get("cqr", {})
     nlab = sum(R["labels_by_year"]["gedi"]) + sum(R["labels_by_year"]["icesat2"])
     years = cfg["years"]
@@ -106,21 +109,57 @@ def render(ctx: dict) -> str:
 
     def pc(v, k):
         return f1(v.get(k), 2) if v else "–"
-    rawv = s.get("variants", {}).get("raw", {})
-    smv = s.get("variants", {}).get("smoothed", {})
+    vkey = "panel_smooth|gedi_night_power"
+    smv = var.get(vkey, {})
     cd = R.get("change_direct", {}).get("all", {})
-    change_rows = [
-        ("Independent annual predictions", rawv.get("pair_change", {}), rawv.get("block_change", {})),
-        ("Kalman-smoothed series", smv.get("pair_change", {}), smv.get("block_change", {})),
-        ("Direct change model (lidar pairs)", cd, {}),
-    ]
+    labels_v = {"oof": "Annual model, conditioned on each observation's sensor/date",
+                "panel_raw": "Annual map predictions (standardized), unsmoothed",
+                "panel_smooth": "Annual map predictions, Kalman-smoothed (the product)"}
+    labels_s = {"all": "all labels", "gedi": "GEDI", "gedi_night_power": "GEDI night, power beams"}
+    change_rows = []
+    for vk, vv in var.items():
+        v, sub = vk.split("|")
+        change_rows.append((f"{labels_v.get(v, v)} — {labels_s.get(sub, sub)}", vv.get("height", {}),
+                            vv.get("pair_change", {}), vv.get("block_change", {})))
+    change_rows.append(("Direct change model trained on lidar pairs — all labels", {}, cd, {}))
     ch_html = "".join(
-        f"<tr><td>{esc(n)}</td><td>{pc(p, 'rate_r')}</td><td>{pc(p, 'rate_rmse')}</td>"
+        f"<tr><td>{esc(n)}</td><td>{pc(h, 'rmse')}</td><td>{pc(p, 'rate_r')}</td><td>{pc(p, 'rate_rmse')}</td>"
         f"<td>{pc(p, 'drop_recall')}</td><td>{pc(p, 'drop_precision')}</td>"
         f"<td>{pc(b, 'block_r')}</td><td>{pc(b, 'block_rmse')}</td></tr>"
-        for n, p, b in change_rows)
-    n_pairs = rawv.get("pair_change", {}).get("n_pairs", 0)
-    n_blocks = rawv.get("block_change", {}).get("block_n", 0)
+        for n, h, p, b in change_rows)
+    allv = var.get("panel_smooth|all", {})
+    n_pairs = allv.get("pair_change", {}).get("n_pairs", 0)
+    n_blocks = allv.get("block_change", {}).get("block_n", 0)
+    diag = pd.read_csv(results_path("labels", "screening_diagnostic.csv"))
+    diag_html = _tbl(diag.rename(columns={"median_abs_diff_m": "median |ICESat-2 − GEDI| (m)",
+                                          "mean_abs_diff_m": "mean |ICESat-2 − GEDI| (m)"}))
+    scr_all = pd.read_csv(results_path("labels", "pair_screening_allchecks.csv"), index_col=0)["value"]
+    csd = pd.read_csv(results_path("uncertainty", final, "change_sd.csv"))
+    csd_t = pd.DataFrame({"canopy height (m)": [f"{a:g}–{b:g}".replace("-inf–", "< ").replace("–inf", "+")
+                                                for a, b in zip(csd.lo_edge, csd.hi_edge)],
+                          "held-out pairs": csd.n_pairs, "1-year change SD (m)": csd.change_sd})
+    csd_html = _tbl(csd_t)
+    tun = results_path("cv", final, "smoother_tuning.csv")
+    sm_cfg = cfg["model"].get("smoother", {})
+    ssm_rows = []
+    for nm, lab in (("ssm_monthly", "Monthly SSM (v1 annual + HLS + S1)"),
+                    ("ssm_3monthly", "3-monthly SSM (v1 annual + HLS + S1)"),
+                    ("ssm_annual_only", "Monthly SSM, v1 annual predictions only")):
+        f = results_path("cv", nm, "summary_subsets.json")
+        if f.exists():
+            for sub, r in json.loads(f.read_text()).items():
+                if sub == "gedi_night_power":
+                    ssm_rows.append({"model": lab, "RMSE (m)": r["rmse"], "bias (m)": r["bias"],
+                                     "pair rate r": r["pair_rate_r"], "drop recall": r["drop_recall"],
+                                     "block change r": r["block_r"]})
+    if smv:
+        ssm_rows.insert(0, {"model": "v1: Kalman-smoothed annual predictions",
+                            "RMSE (m)": smv["height"]["rmse"], "bias (m)": smv["height"]["bias"],
+                            "pair rate r": smv["pair_change"].get("rate_r"),
+                            "drop recall": smv["pair_change"].get("drop_recall"),
+                            "block change r": smv["block_change"].get("block_r")})
+    ssm_html = _tbl(pd.DataFrame(ssm_rows)) if len(ssm_rows) > 1 else ""
+    ssm_tune = R.get("ssm_tuning_best")
     noise_floor = float(np.sqrt(2) * noise.query("sensor == 'gedi'").sigma.mean())
 
     av3 = pd.DataFrame(R.get("av3", []))
@@ -175,7 +214,7 @@ uses all the data.</p>
   <div class="tile"><div class="label">Height RMSE vs held-out GEDI</div><div class="value">{f1(g.get('rmse'))} m</div><div class="note">spatial-region CV, n = {int(g.get('n', 0)):,}; bias {f1(g.get('bias'), 2)} m</div></div>
   <div class="tile"><div class="label">R² vs held-out GEDI</div><div class="value">{f1(g.get('r2'), 2)}</div><div class="note">the GEDI noise floor alone is σ ≈ {f1(noise.query("sensor == 'gedi'").sigma.mean())} m</div></div>
   <div class="tile"><div class="label">90 % interval coverage</div><div class="value">{f1(100 * cqr.get('coverage_crossfit', np.nan), 1)} %</div><div class="note">conformal, cross-fitted over folds</div></div>
-  <div class="tile"><div class="label">Year-to-year change, 2 km blocks</div><div class="value">r = {f1(smv.get('block_change', {}).get('block_r'), 2)}</div><div class="note">sample-matched block means, {n_blocks:,} block-years</div></div>
+  <div class="tile"><div class="label">Year-to-year change, 2 km blocks</div><div class="value">r = {f1(smv.get('block_change', {}).get('block_r'), 2)}</div><div class="note">smoothed map vs held-out GEDI night power-beam shots</div></div>
 </div>
 <p class="small muted">Final configuration: {esc(final_label)}. Built from commit-tracked results in
 <code>results/</code>; code at <a href="https://github.com/ashiklom/azuero-canopy-height">github.com/ashiklom/azuero-canopy-height</a>.</p>
@@ -183,10 +222,10 @@ uses all the data.</p>
 
 <section id="map-section">
 <h2>Explore the product</h2>
-<p>Pick a year and a layer. Click anywhere to read the 30 m pixel values, which are read
+<p>Pick a year and a layer. Click anywhere to read the 20 m pixel values, which are read
 directly from the product's Cloud-Optimized GeoTIFFs. Change is the smoothed height
 minus the previous year's smoothed height. Uncertainty is the 1 SD of a GEDI-equivalent
-measurement at the cell.</p>
+measurement at the cell (conformally calibrated).</p>
 <div class="map-controls">
   <label for="map-layer">Layer</label><select id="map-layer"></select>
   <label for="map-year">Year</label><input type="range" id="map-year" step="1"><strong id="map-year-label"></strong>
@@ -194,7 +233,7 @@ measurement at the cell.</p>
   <span class="scale-legend" id="map-legend"></span>
 </div>
 <div id="map" role="application" aria-label="Canopy height map"></div>
-<p class="small muted">Overlays are 60 m averages for display; the downloadable rasters are at full resolution.</p>
+<p class="small muted">Overlays are 100 m averages for display. The downloadable rasters are at full resolution.</p>
 </section>
 
 <section id="data">
@@ -252,6 +291,19 @@ Azuero. They are aggregated to the grid, binned to 30 nm, and reduced to 10 prin
 components plus NDVI, NDRE, PRI, NDWI and the cellulose absorption index. They are
 tested as an experiment because they cover only part of the peninsula on one date.</li>
 </ul>
+<p><strong>What the final model uses.</strong> Cross-validation (below) settled on the
+following features:</p>
+<ul>
+<li>the AlphaEarth embedding of the observation's year;</li>
+<li>the observation's decimal year;</li>
+<li>terrain;</li>
+<li>three observation covariates: ICESat-2 vs GEDI, night vs day, and strong vs weak
+beam.</li>
+</ul>
+<p>The map is predicted on a single measurement standard: a GEDI power-beam shot at
+night, mid-year. Context embeddings, HLS, Sentinel-1 and AVIRIS-3 features did not
+improve held-out accuracy. They are reported as ablations. HLS and Sentinel-1 still feed
+the stability screening and the version-2 state-space model.</p>
 <h3>Evaluated but not used</h3>
 <ul>
 <li><strong>LVIS</strong> and other airborne lidar: none over Azuero in NASA Earthdata.</li>
@@ -293,9 +345,19 @@ below {f1(thr.threshold, 3)}. That is the 2nd percentile in stable reference for
 <li>Hansen GFC loss within the span;</li>
 <li>annual HLS NBR changes &gt; 0.10 and Sentinel-1 VH changes &gt; 1.5 dB.</li>
 </ul>
-<p>Of {int(screen.get('n_pairs', 0)):,} cross-sensor pairs, {f1(100 * screen.get('flag_aef', 0), 1)} % were
-flagged by AlphaEarth and {f1(100 * screen.get('flag_gfc', 0), 1)} % by GFC loss, and
-{f1(100 * screen.get('stable', 0), 1)} % were kept. Measurement noise per sensor and
+<p>The product's calibration uses the AlphaEarth and GFC checks. Of
+{int(screen.get('n_pairs', 0)):,} cross-sensor pairs,
+{f1(100 * screen.get('flag_aef', 0), 1)} % were flagged by AlphaEarth and
+{f1(100 * screen.get('flag_gfc', 0), 1)} % by GFC loss, and
+{f1(100 * screen.get('stable', 0), 1)} % were kept. Adding the HLS and Sentinel-1 checks
+flags more pairs ({f1(100 * scr_all.get('flag_hls', 0), 1)} % and
+{f1(100 * scr_all.get('flag_s1', 0), 1)} %), keeping {f1(100 * scr_all.get('stable', 0), 1)} %.
+But the flagged pairs do <em>not</em> disagree more than unflagged pairs; only the few
+GFC-loss pairs do. Within a year, real canopy change is rare compared with measurement
+noise and geolocation mismatch. The +0.3–0.4 m shift that the stricter screen produces
+in the calibration is selection noise, so the product keeps the simpler screen:</p>
+{diag_html}
+<p> Measurement noise per sensor and
 class comes from stable same-sensor repeat pairs, using Var(h₁ − h₂) = 2σ²:</p>
 {_tbl(noise_t)}
 <p>Night acquisitions are much less noisy for ICESat-2, and daytime solar background
@@ -313,7 +375,12 @@ poorly constrained for the noisy daytime classes:</p>
 <h3>Model</h3>
 <p>One row per lidar observation, with features from that observation's calendar year
 at its grid cell. LightGBM gradient boosting (600 trees, 127 leaves) predicts the
-harmonized height. Separate quantile models give raw 5 % and 95 % quantiles. Up to
+harmonized height. The observation covariates absorb sensor- and illumination-specific
+differences that the calibration leaves behind. The time feature captures a trend that
+the embeddings miss: models that never saw a year are biased by +1.0 m in 2020 and
+−0.6 m in 2023–2025. For years before 2019 the time feature is held at 2019.3, because the
+only earlier labels are late-2018 ICESat-2; extrapolating it produced an artificial
+coastal "loss" from 2018 to 2019. Those years differ only through their embeddings. Separate quantile models give raw 5 % and 95 % quantiles. Up to
 400 000 rows are sampled per fit in the <code>small</code> profile. A scikit-learn MLP
 was also tested. Larger models are implemented in <code>azuero.models.registry</code>
 but were not run on this VM: a spatial-context U-Net on embedding/HLS patches, a
@@ -349,10 +416,17 @@ observations</em>. Sample matching cancels footprint-placement differences;</li>
 is biased.</p>
 
 <h3>Uncertainty</h3>
-<p>Raw quantiles are calibrated with Mondrian conformalized quantile regression. The
-offsets are computed per bin of predicted height from out-of-fold residuals and
-cross-fitted, so reported coverage is out of sample. The interval refers to a
-GEDI-equivalent rh98 measurement at the cell, so it includes lidar measurement noise.</p>
+<p><strong>Height.</strong> Raw quantiles are calibrated with Mondrian conformalized
+quantile regression. The offsets are computed per bin of predicted height from
+out-of-fold residuals and cross-fitted, so reported coverage is out of sample. The
+interval refers to a GEDI-equivalent rh98 measurement at the cell, so it includes lidar
+measurement noise. The product's SD is this calibrated SD. The Kalman smoother's own
+posterior SD is <em>not</em> used: it assumes independent annual errors, while a
+pixel's errors are strongly correlated across years, so it would be overconfident.</p>
+<p><strong>Change.</strong> The SD of a 1-year change is estimated empirically from
+held-out lidar pairs 0.75–1.5 years apart, scored on the smoothed map predictions.
+Each pair's own label noise (class-specific σ) is subtracted:</p>
+{csd_html}
 
 <h3>Temporal consistency</h3>
 <p>Annual predictions are combined per pixel with a robust Kalman filter and
@@ -363,9 +437,12 @@ Rauch–Tung–Striebel smoother:</p>
 <li>a large negative innovation (&gt; 2.5σ) inflates the process variance for that step,
 so clearing appears as a jump instead of being smoothed away.</li>
 </ul>
-<p>Change SDs use the smoothed lag-one covariances. For evaluation, the smoother runs
-on out-of-fold <em>panel</em> predictions: every year at every held-out cell, predicted
-by that fold's model.</p>
+<p>For evaluation, the smoother runs on out-of-fold <em>panel</em> predictions: every
+year at every held-out cell, predicted by that fold's model on the product's measurement
+standard. Its parameters were tuned on folds 0–2 and checked on folds 3–4:
+q<sub>h</sub> = {sm_cfg.get('q_h')}, q<sub>g</sub> = {sm_cfg.get('q_g')}, jump threshold
+{sm_cfg.get('jump_z')}σ, observation-variance scale {sm_cfg.get('r_scale')}. The objective
+was nearly flat across the grid.</p>
 
 <h3>Resource profiles</h3>
 <p>Everything specific to this small VM (4 CPUs, 15 GB RAM, ~30 GB disk) is a separate
@@ -414,10 +491,21 @@ ICESat-2.</p>
 20 m of each other already differ by a noise SD of about {f1(noise_floor)} m, while
 typical regrowth is 0.5–2 m/yr. Pair-level skill is therefore limited by the labels as
 much as by the model. Block-level change averages much of that noise out.</p>
-<div class="tablewrap"><table class="data"><thead><tr><th>method</th><th>pair rate r</th><th>pair rate RMSE (m/yr)</th><th>drop recall</th><th>drop precision</th><th>block change r</th><th>block change RMSE (m)</th></tr></thead>
+<p>The rows that describe the <strong>map</strong> are the standardized ("panel")
+predictions. The first rows score the annual model with each observation's own
+sensor, illumination and date. They show higher pair-level change skill, but part of that
+comes from changes in measurement conditions between the two observations, not from
+canopy change. The fairest test of the product is the smoothed panel on GEDI night
+power-beam shots.</p>
+<div class="tablewrap"><table class="data"><thead><tr><th>predictions — labels</th><th>height RMSE (m)</th><th>pair rate r</th><th>pair rate RMSE (m/yr)</th><th>drop recall</th><th>drop precision</th><th>block change r</th><th>block change RMSE (m)</th></tr></thead>
 <tbody>{ch_html}</tbody></table></div>
-<p class="small muted">There are {n_pairs:,} held-out lidar pairs and {n_blocks:,}
-block-year pairs. The direct change model is scored on the same pairs.</p>
+<p class="small muted">On all labels there are {n_pairs:,} held-out lidar pairs and
+{n_blocks:,} block-year pairs. The direct change model (embedding differences →
+Δheight) is scored on the same all-label pairs. It reaches the best pair-level rate
+correlation, but it is not used for the map because its changes would not be consistent
+with the annual heights. Large drops (&gt; 10 m) are rarely recovered by any method:
+annual predictions understate clearings.</p>
+<div id="fig-area"></div>
 <div id="fig-stats"></div>
 </section>
 
@@ -433,9 +521,27 @@ which is the regression-to-the-mean effect seen in the height results.</p>
 
 <section id="v2">
 <h2>Version 2: monthly state-space model</h2>
-<p class="muted">In progress. A per-pixel monthly state-space model will use lidar as
-direct observations of height, with data-driven observation operators for HLS and
-Sentinel-1. It will be compared with version 1 here.</p>
+<p>After version 1, a per-pixel <strong>monthly</strong> state-space model was built
+(<code>azuero.ssm</code>). Its state is canopy height, growth rate, and two slowly
+varying bias terms for the optical and radar observation operators. It takes four kinds
+of observations:</p>
+<ul>
+<li><em>lidar</em> (GEDI / ICESat-2, calibrated): identity observation operator, with
+the class-specific label noise;</li>
+<li>the <em>v1 annual prediction</em>: placed at July, with its model-error variance;</li>
+<li><em>HLS</em> monthly composites: mapped to height by a LightGBM operator trained on
+lidar from the same month;</li>
+<li><em>Sentinel-1</em> monthly composites: mapped the same way.</li>
+</ul>
+<p>The operators' errors are split into a persistent per-pixel bias, estimated from
+residual pairs at the same place in different months, and month-to-month noise. That
+way the filter does not treat 108 correlated monthly errors as independent evidence.
+Disturbances use the same robust jump mechanism as version 1. In cross-validation, the
+held-out cells' lidar is withheld and the smoothed monthly height is scored at each
+held-out observation's month.</p>
+{ssm_html or '<p class="muted">Results pending.</p>'}
+<p class="small muted">All rows are scored on held-out GEDI night power-beam shots,
+with no held-out lidar used by any model.</p>
 </section>
 
 <section id="limitations">
@@ -448,28 +554,40 @@ spaceborne lidar with σ ≈ 2–4 m noise and ~10 m geolocation error.</li>
 <li>AlphaEarth embeddings are produced by a model whose training may have included GEDI.
 The spatial hold-outs still test generalization to unseen places.</li>
 <li>2017 has no lidar and 2018 has only October–December ICESat-2. Their quality
-flags (2 and 1) mark that.</li>
-<li>Pixel-level annual change is noisy. Use block or landscape aggregates, or
-multi-year differences, for growth rates.</li>
+flags (2 and 1) mark that, and their time feature is held at the 2019 value.</li>
+<li>Pixel-level annual change is very uncertain (1 SD ≈ 6–9 m for one year). Use block
+or landscape aggregates, or multi-year differences, for growth rates. Clearings are
+under-detected.</li>
+<li>The 20 m pixels are finer than a GEDI footprint (25 m) or an ICESat-2 segment
+(30 m along track). The effective resolution is closer to the lidar footprint.</li>
 </ul>
 </section>
 
 <section id="downloads">
 <h2>Downloads and reproducibility</h2>
-<p>The yearly products are Cloud-Optimized GeoTIFFs in UTM 17N at 30 m
-(<code>data/cogs/azuero_canopy_height_YEAR.tif</code>, bands: height, lower90,
-upper90, sd, change_sd, flag). They are stored as uint8 with the scale factors in the
-file tags: heights 0.25 m, SDs 0.1 m. Signed change is in
-<code>…_YEAR_change.tif</code> (int8, 0.1 m). Quality flag: 0 = lidar year, 1 = partial
-lidar year (2018), 2 = no lidar (2017).</p>
-<ul>{''.join(f'<li><a href="data/cogs/azuero_canopy_height_{y}.tif">{y}</a> · <a href="data/cogs/azuero_canopy_height_{y}_change.tif">{y} change</a></li>' for y in years)}</ul>
+<p>The yearly products are Cloud-Optimized GeoTIFFs in UTM 17N (EPSG:32617). Three
+files per year, with the scale factor stored in each file:</p>
+<ul>
+<li><code>azuero_canopy_height_YEAR.tif</code>: smoothed canopy height (rh98-equivalent)
+on the 20 m AlphaEarth grid, uint8 × 0.5 m, nodata 255;</li>
+<li><code>azuero_canopy_height_YEAR_sd.tif</code>: calibrated 1 SD of height, averaged to
+100 m, uint8 × 0.1 m. The 90 % interval is height ± 1.645 SD;</li>
+<li><code>azuero_canopy_height_YEAR_change.tif</code>: change from the previous year
+(smoothed), int8 × 0.1 m, nodata −128. Its 1 SD is given in the change-uncertainty table
+above.</li>
+</ul>
+<p>Quality flag by year: 0 = lidar year (2019–2025), 1 = partial lidar year (2018),
+2 = no lidar (2017). The full-precision rasters (int16 × 0.01 m, all bands) are
+regenerated with <code>azuero product v1_aef20</code>.</p>
+<ul>{''.join(f'<li>{y}: <a href="data/cogs/azuero_canopy_height_{y}.tif">height</a> · <a href="data/cogs/azuero_canopy_height_{y}_sd.tif">SD</a>' + (f' · <a href="data/cogs/azuero_canopy_height_{y}_change.tif">change</a>' if y != years[0] else '') + '</li>' for y in years)}</ul>
 <pre>uv venv &amp;&amp; uv pip install -e '.[dev]'
 azuero aoi &amp;&amp; azuero lidar &amp;&amp; azuero alphaearth &amp;&amp; azuero aefctx &amp;&amp; azuero dem
 azuero hls &amp;&amp; azuero s1 &amp;&amp; azuero airborne &amp;&amp; azuero reference
 azuero labels &amp;&amp; azuero calibrate
-azuero cv &lt;name&gt; --sets aef aefctx dem ...   # experiments
-azuero product --profile small                # final model, maps, COGs
-azuero site --final &lt;name&gt; --product &lt;name&gt;</pre>
+azuero cv v1_aef20 --grid aef20 --sets aef time dem --obs-covariates   # final config CV
+azuero product v1_aef20                       # train on all data, predict, calibrate, smooth
+azuero ssm-cv v1_aef20 --name ssm_monthly     # version 2
+azuero site --final v1_aef20 --product final_v1_aef20</pre>
 </section>
 
 <footer>
@@ -513,6 +631,11 @@ document.addEventListener("DOMContentLoaded", () => {{
     title: "Interval reliability", subtitle: "empirical vs nominal coverage (Gaussian intervals from calibrated SDs); line = ideal",
     x: R.reliability.nominal, series: [{{name: "Empirical coverage", values: R.reliability.empirical}}],
     xTitle: "Nominal coverage", yTitle: "Empirical coverage", diag: true, xMin: 0.4, xMax: 1, yMin: 0.4, yMax: 1 }});
+  if (R.product_stats) V.lines(document.getElementById("fig-area"), {{
+    title: "Area with tall canopy", subtitle: "final product; thousand hectares",
+    x: R.product_stats.map((d) => d.year), xTicks: R.product_stats.map((d) => d.year), xFmt: (v) => String(v),
+    series: [{{name: "Canopy ≥ 10 m", values: R.product_stats.map((d) => d.area_ge_10m_kha)}}, {{name: "Canopy ≥ 20 m", values: R.product_stats.map((d) => d.area_ge_20m_kha)}}],
+    xTitle: "Year", yTitle: "Area (kha)" }});
   if (R.product_stats) V.lines(document.getElementById("fig-stats"), {{
     title: "Mean canopy height across the peninsula", subtitle: "final product, smoothed",
     x: R.product_stats.map((d) => d.year), xTicks: R.product_stats.map((d) => d.year), xFmt: (v) => String(v),

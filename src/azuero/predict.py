@@ -217,78 +217,58 @@ def finalize(name: str, grid_name: str, cqr_name: str, smooth_series: bool = Tru
     return list(outs.values())
 
 
-COMPACT = {  # band -> (scale, offset, dtype, nodata)
-    "height": (0.25, 0.0, "uint8", 255),
-    "lower90": (0.25, 0.0, "uint8", 255),
-    "upper90": (0.25, 0.0, "uint8", 255),
-    "sd": (0.1, 0.0, "uint8", 255),
-    "change": (0.1, 0.0, "int8", -128),
-    "change_sd": (0.1, 0.0, "uint8", 255),
-    "flag": (1.0, 0.0, "uint8", 255),
+# Web distribution layers: name -> (source band, scale, dtype, nodata, aggregation factor).
+# Height keeps the native grid; the SD is spatially smooth and is block-averaged to ~100 m;
+# lower/upper bounds are height -/+ 1.645 SD, and change SDs come from the published
+# lookup table, so neither is stored separately.
+COMPACT = {
+    "height": ("height", 0.5, "uint8", 255, 1),
+    "sd": ("sd", 0.1, "uint8", 255, 5),
+    "change": ("change", 0.1, "int8", -128, 1),
 }
 
 
 def compact_cogs(name: str, out_dir: Path) -> list[Path]:
-    """Quantized multi-band COGs (uint8/int8) for web distribution, one per year."""
+    """Quantized single-band COGs for web distribution: height, SD and change per year."""
     from rasterio.shutil import copy as rcopy
 
     out_dir.mkdir(parents=True, exist_ok=True)
     outs = []
     for f in sorted(data_path("product", name).glob("canopy_height_*.tif")):
         year = f.stem.split("_")[-1]
-        a = read_product(f)
         with rasterio.open(f) as src:
-            names = src.descriptions
+            names = list(src.descriptions)
             prof = src.profile
-        # One dtype per file is required; store the signed change band in a separate COG.
-        for group, members in (("", [n for n in names if n != "change"]), ("_change", ["change"])):
-            dt = COMPACT[members[0]][2]
-            nod = COMPACT[members[0]][3]
-            q = np.full((len(members), *a.shape[1:]), nod, dtype=dt)
-            for i, n in enumerate(members):
-                sc, off, _, _ = COMPACT[n]
-                v = a[names.index(n)]
-                info = np.iinfo(dt)
-                lim_lo = info.min + (1 if nod == info.min else 0)
-                lim_hi = info.max - (1 if nod == info.max else 0)
-                qv = np.clip(np.round((v - off) / sc), lim_lo, lim_hi)
-                q[i] = np.where(np.isfinite(v), qv, nod).astype(dt)
+        for layer, (band, sc, dt, nod, k) in COMPACT.items():
+            v = read_product(f, names.index(band) + 1)
+            if not np.isfinite(v).any():
+                continue
+            transform = prof["transform"]
+            if k > 1:
+                v = block_mean(v, k, min_frac=0.3)
+                transform = transform * transform.scale(k, k)
+            info = np.iinfo(dt)
+            lo = info.min + (1 if nod == info.min else 0)
+            hi = info.max - (1 if nod == info.max else 0)
+            q = np.where(np.isfinite(v), np.clip(np.round(v / sc), lo, hi), nod).astype(dt)
             p = dict(prof)
-            p.update(count=len(members), dtype=dt, nodata=nod, compress="deflate", predictor=2,
-                     tiled=True, blockxsize=512, blockysize=512, interleave="band")
-            tmp = out_dir / f"tmp_{year}{group}.tif"
+            p.update(count=1, dtype=dt, nodata=nod, compress="deflate", zlevel=9, predictor=2,
+                     tiled=True, blockxsize=512, blockysize=512, interleave="band",
+                     width=q.shape[1], height=q.shape[0], transform=transform)
+            p.pop("scales", None)
+            tmp = out_dir / f"tmp_{year}_{layer}.tif"
             with rasterio.open(tmp, "w", **p) as dst:
-                dst.write(q)
-                dst.descriptions = tuple(members)
-                dst.update_tags(**{f"scale_{n}": COMPACT[n][0] for n in members})
-                dst.build_overviews([2, 4, 8, 16], rasterio.enums.Resampling.nearest)
-            dst_f = out_dir / f"azuero_canopy_height_{year}{group}.tif"
-            rcopy(tmp, dst_f, driver="COG", compress="DEFLATE", predictor="2",
+                dst.write(q, 1)
+                dst.descriptions = (layer,)
+                dst.scales = (sc,)
+                dst.update_tags(scale=sc, units="m")
+            suffix = "" if layer == "height" else f"_{layer}"
+            dst_f = out_dir / f"azuero_canopy_height_{year}{suffix}.tif"
+            rcopy(tmp, dst_f, driver="COG", compress="DEFLATE", predictor="2", level=9,
                   overview_resampling="nearest")
             tmp.unlink()
             outs.append(dst_f)
     return outs
-
-
-def product_stats(name: str) -> pd.DataFrame:
-    """Peninsula-wide summaries per year (committed to results/product)."""
-    rows = []
-    for y in load_config()["years"]:
-        f = data_path("product", name, f"canopy_height_{y}.tif")
-        h, sd, ch = (read_product(f, b) for b in (1, 4, 5))
-        with rasterio.open(f) as src:
-            px_ha = (src.res[0] * src.res[1]) / 1e4
-        ok = np.isfinite(h)
-        rows.append({"year": y, "mean_height": float(np.nanmean(h)),
-                     "median_height": float(np.nanmedian(h)),
-                     "area_ge_10m_kha": float((h[ok] >= 10).sum() * px_ha / 1e3),
-                     "area_ge_20m_kha": float((h[ok] >= 20).sum() * px_ha / 1e3),
-                     "mean_sd": float(np.nanmean(sd)),
-                     "mean_change": float(np.nanmean(ch)) if np.isfinite(ch).any() else np.nan,
-                     "area_loss_gt5m_ha": float((ch[np.isfinite(ch)] < -5).sum() * px_ha)})
-    df = pd.DataFrame(rows)
-    df.round(3).to_csv(results_path("product", "stats_by_year.csv"), index=False)
-    return df
 
 
 def block_mean(a: np.ndarray, k: int, min_frac: float = 0.8) -> np.ndarray:

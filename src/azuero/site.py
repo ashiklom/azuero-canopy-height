@@ -66,7 +66,7 @@ def static_figures():
 
 # ----------------------------------------------------------------------------- map
 
-def map_layers(product: str, grid_name: str, res_m: float = 60.0):
+def map_layers(product: str, grid_name: str, res_m: float = 100.0):
     """Warp product bands to Web Mercator PNG overlays, with a manifest."""
     import rasterio
     from PIL import Image
@@ -106,8 +106,12 @@ def map_layers(product: str, grid_name: str, res_m: float = 60.0):
                     if key == "change" and y == years[0]:
                         continue
                     a = vrt.read(s["band"]) * PRODUCT_SCALE
-                    Image.fromarray(colorize(a, s["kind"], s["vmin"], s["vmax"])).save(
-                        out / f"{key}_{y}.png", optimize=True)
+                    img = Image.fromarray(colorize(a, s["kind"], s["vmin"], s["vmax"]))
+                    # 8-bit palette (64 colours + transparency) keeps overlays small.
+                    alpha = img.getchannel("A")
+                    pimg = img.convert("RGB").quantize(colors=63, method=Image.Quantize.MEDIANCUT)
+                    pimg.paste(63, mask=alpha.point(lambda v: 255 if v == 0 else 0))
+                    pimg.save(out / f"{key}_{y}.png", optimize=True, transparency=63)
     layers = {}
     for key, s in spec.items():
         layers[key] = {"label": s["label"], "unit": s["unit"], "colors": s["colors"],
@@ -115,16 +119,18 @@ def map_layers(product: str, grid_name: str, res_m: float = 60.0):
                        "years": years[1:] if key == "change" else years}
     from .predict import COMPACT
 
-    cog_bands = {
-        "main": [{"name": n, "scale": COMPACT[n][0], "nodata": COMPACT[n][3]}
-                 for n in ("height", "lower90", "upper90", "sd", "change_sd", "flag")],
-        "change": [{"name": "change", "scale": COMPACT["change"][0], "nodata": COMPACT["change"][3]}],
-    }
     manifest = {"bounds": bounds, "years": years, "layers": layers, "res_m": res_m,
-                "cog": {"url": "data/cogs/azuero_canopy_height_{year}.tif",
-                        "change_url": "data/cogs/azuero_canopy_height_{year}_change.tif",
-                        "crs_proj4": "+proj=utm +zone=17 +datum=WGS84 +units=m +no_defs",
-                        "bands": cog_bands}}
+                "cog": {"crs_proj4": "+proj=utm +zone=17 +datum=WGS84 +units=m +no_defs",
+                        "files": {k: "data/cogs/azuero_canopy_height_{year}"
+                                  + ("" if k == "height" else f"_{k}") + ".tif"
+                                  for k in COMPACT},
+                        "scale": {k: v[1] for k, v in COMPACT.items()},
+                        "nodata": {k: v[3] for k, v in COMPACT.items()}}}
+    cfg = load_config()
+    manifest["flags"] = {y: (0 if y >= 2019 else 1) if y in cfg["lidar_years"] else 2 for y in years}
+    csd = pd.read_csv(results_path("uncertainty", cfg["model"]["final_experiment"], "change_sd.csv"))
+    manifest["change_sd"] = [{"lo": max(r.lo_edge, -1e9), "hi": min(r.hi_edge, 1e9), "sd": r.change_sd}
+                             for r in csd.itertuples()]
     (out / "manifest.json").write_text(json.dumps(manifest))
     return manifest
 

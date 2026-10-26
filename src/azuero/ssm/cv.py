@@ -114,6 +114,25 @@ def score_fold(held: pd.DataFrame, cells: pd.DataFrame, H: np.ndarray, years, st
     return pred
 
 
+def subset_summary(name: str) -> dict:
+    """Height/change metrics of an SSM run on the v1 label subsets."""
+    from ..experiment import SUBSETS
+
+    d = pd.read_parquet(data_path("cv", name, "oof.parquet"))
+    out = {}
+    for sub, fn in SUBSETS.items():
+        x = fn(d)
+        x = x[np.isfinite(x.pred)]
+        hm = height_metrics(x.h_cal, x.pred)
+        pc = pair_change_metrics(change_pairs(x))
+        bc = block_change_metrics(block_change(x))
+        out[sub] = {"n": hm["n"], "rmse": hm["rmse"], "bias": hm["bias"],
+                    "pair_rate_r": pc.get("rate_r"), "drop_recall": pc.get("drop_recall"),
+                    "block_r": bc.get("block_r")}
+    (results_dir("cv", name) / "summary_subsets.json").write_text(json.dumps(out, indent=2))
+    return out
+
+
 def run(v1: str, name: str = "ssm", step_months: int = 1, use=("annual", "optical", "radar"),
         params: SSMParams | None = None, chunk: int = 15000, max_cells: int | None = None,
         seed: int = 0) -> dict:
@@ -173,6 +192,7 @@ def run(v1: str, name: str = "ssm", step_months: int = 1, use=("annual", "optica
     s["config"] = {"v1": v1, "step_months": step_months, "use": list(use)}
     d = results_dir("cv", name)
     (d / "summary.json").write_text(json.dumps(s, indent=2, default=float))
+    subset_summary(name)
     return s
 
 
