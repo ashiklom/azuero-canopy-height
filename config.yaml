@@ -113,5 +113,5 @@ ssm:
   q_h: 1.0
   jump_z: 3.0
   jump_types: [lidar, annual]
-  r_opt: 1.0
+  r_opt: 0.25          # tuned on folds 0-2 (results/cv/ssm_tuning/ssm_tuning.csv)
   bias_prior_sd: 1.0
