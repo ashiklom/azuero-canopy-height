@@ -48,6 +48,7 @@ class SSMParams:
     r_scale: dict = field(default_factory=lambda: {"lidar": 1.0, "annual": 1.0,
                                                    "optical": 1.0, "radar": 1.0})
     h_max: float = 60.0
+    jump_types: tuple = JUMP_TYPES
 
 
 def run(obs: dict, T: int, dt: float, p: SSMParams, h0=None, return_cov: bool = False):
@@ -93,7 +94,7 @@ def run(obs: dict, T: int, dt: float, p: SSMParams, h0=None, return_cov: bool = 
             PH = P @ Hr                       # (n, 4)
             S = PH @ Hr + R
             innov = yv - pred
-            if k in JUMP_TYPES and t > 0:
+            if k in p.jump_types and t > 0:
                 jz = m & ~jumped & (innov / np.sqrt(S) < -p.jump_z)
                 if jz.any():
                     P[jz, 0, 0] += p.jump_var
