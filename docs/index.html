@@ -1,0 +1,473 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Azuero canopy height 2017–2025</title>
+<link rel="stylesheet" href="assets/style.css">
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" defer></script>
+<script src="https://unpkg.com/geotiff@2.1.3/dist-browser/geotiff.js" defer></script>
+<script src="https://unpkg.com/proj4@2.12.1/dist/proj4.js" defer></script>
+<script src="assets/charts.js" defer></script>
+<script src="assets/map.js" defer></script>
+</head>
+<body>
+<header class="site"><div class="inner">
+  <span class="brand">Azuero canopy height</span>
+  <nav>
+    <a href="#map-section">Map</a><a href="#data">Data</a><a href="#methods">Methods</a>
+    <a href="#results">Results</a><a href="#change">Change</a><a href="#uncertainty">Uncertainty</a>
+    <a href="#limitations">Limitations</a><a href="#downloads">Downloads</a>
+  </nav>
+  <button class="theme" id="theme-btn" type="button">Dark mode</button>
+</div></header>
+<main>
+
+<section id="top">
+<h1>Annual canopy height for the Azuero Peninsula, Panama, 2017–2025</h1>
+<p class="lede">An annual, gridded 20 m
+canopy-height product with per-pixel uncertainty for the Azuero Peninsula
+(7534 km²). Spaceborne lidar from GEDI and ICESat-2 supplies the labels:
+697,731 quality-screened observations, harmonized to the GEDI rh98 scale. The
+<a href="https://deepmind.google/discover/blog/alphaearth-foundations-helps-map-our-planet-in-unprecedented-detail/">AlphaEarth
+Foundations</a> annual satellite embeddings, plus supporting predictors, map those labels
+across the peninsula. Accuracy comes from cross-validation that holds out whole
+contiguous regions and whole years. It is a lower bound for the final product, which
+uses all the data.</p>
+<div class="tiles">
+  <div class="tile"><div class="label">Height RMSE vs held-out GEDI</div><div class="value">5.5 m</div><div class="note">spatial-region CV, n = 183,566; bias 0.01 m</div></div>
+  <div class="tile"><div class="label">R² vs held-out GEDI</div><div class="value">0.67</div><div class="note">the GEDI noise floor alone is σ ≈ 3.2 m</div></div>
+  <div class="tile"><div class="label">90 % interval coverage</div><div class="value">90.0 %</div><div class="note">conformal, cross-fitted over folds</div></div>
+  <div class="tile"><div class="label">Year-to-year change, 2 km blocks</div><div class="value">r = 0.61</div><div class="note">smoothed map vs held-out GEDI night power-beam shots</div></div>
+</div>
+<p class="small muted">Final configuration: Final: AlphaEarth + time + terrain + observation covariates (20 m). Built from commit-tracked results in
+<code>results/</code>; code at <a href="https://github.com/ashiklom/azuero-canopy-height">github.com/ashiklom/azuero-canopy-height</a>.</p>
+</section>
+
+<section id="map-section">
+<h2>Explore the product</h2>
+<p>Pick a year and a layer. Click anywhere to read the 20 m pixel values, which are read
+directly from the product's Cloud-Optimized GeoTIFFs. Change is the smoothed height
+minus the previous year's smoothed height. Uncertainty is the 1 SD of a GEDI-equivalent
+measurement at the cell (conformally calibrated).</p>
+<div class="map-controls">
+  <label for="map-layer">Layer</label><select id="map-layer"></select>
+  <label for="map-year">Year</label><input type="range" id="map-year" step="1"><strong id="map-year-label"></strong>
+  <label for="map-opacity">Opacity</label><input type="range" id="map-opacity" min="0" max="1" step="0.05" value="0.85">
+  <span class="scale-legend" id="map-legend"></span>
+</div>
+<div id="map" role="application" aria-label="Canopy height map"></div>
+<p class="small muted">Overlays are 100 m averages for display. The downloadable rasters are at full resolution.</p>
+</section>
+
+<section id="data">
+<h2>Data</h2>
+<h3>Lidar labels</h3>
+<p><strong>GEDI L2A v002</strong> (2019–2023, then from 2024 after the ISS storage period).
+Shots are retrieved with <a href="https://slideruleearth.io">SlideRule Earth</a>
+(<code>gedi02ap</code>) with the full relative-height profile and quality fields. We keep
+shots with <code>quality_flag = 1</code>, <code>degrade_flag = 0</code>, the surface flag
+set, sensitivity ≥ 0.95 (≥ 0.98 for coverage beams), at least one detected mode,
+agreement with the reference DEM within 50 m, and urban fraction below 50 %. The
+target is rh98.</p>
+<p><strong>ICESat-2</strong> (from October 2018). Instead of the standard 100 m ATL08
+segments, SlideRule's <code>atl03x</code> endpoint runs the PhoREAL canopy algorithm on
+custom <strong>30 m along-track extents</strong> (<code>len = res = 30 m</code>). This
+matches the analysis grid. It uses the ATL08 photon classes (ground, canopy,
+top-of-canopy) with a 1 m vertical bin, relative heights, and the extent centre for
+geolocation. We require at least 10 photons including at least 3 ground photons, no
+processing flags and no water. The 98th-percentile canopy relief (<code>h_canopy</code>)
+is the target. Comparisons with GEDI showed that the ATL08 multiple-scattering (cloud)
+flag does <em>not</em> degrade agreement, so it is not used as a filter.</p>
+<p>Observations far from the robust local consensus are flagged and excluded from
+training. The test is |h − median| &gt; max(3·MAD, 10 m) among same-sensor,
+same-year neighbours within 100 m.</p>
+<div id="fig-labels"></div>
+<img class="figure" src="img/lidar_density.png" alt="Maps of lidar observation density for GEDI and ICESat-2 over the Azuero Peninsula">
+<h3>Quality screening</h3>
+<div class="tablewrap"><table class="data"><thead><tr><th>sensor</th><th>step</th><th>observations remaining</th></tr></thead><tbody><tr><td>gedi</td><td>raw</td><td>1705186</td></tr><tr><td>gedi</td><td>quality_flag</td><td>538869</td></tr><tr><td>gedi</td><td>degrade_flag</td><td>378618</td></tr><tr><td>gedi</td><td>surface_flag</td><td>378618</td></tr><tr><td>gedi</td><td>sensitivity</td><td>188668</td></tr><tr><td>gedi</td><td>detected_modes</td><td>188668</td></tr><tr><td>gedi</td><td>dem_agreement</td><td>186692</td></tr><tr><td>gedi</td><td>urban</td><td>186349</td></tr><tr><td>gedi</td><td>height_range</td><td>186224</td></tr><tr><td>icesat2</td><td>raw</td><td>937221</td></tr><tr><td>icesat2</td><td>pflags</td><td>850694</td></tr><tr><td>icesat2</td><td>water</td><td>840294</td></tr><tr><td>icesat2</td><td>photons</td><td>747823</td></tr><tr><td>icesat2</td><td>ground_photons</td><td>530998</td></tr><tr><td>icesat2</td><td>cloud_msw</td><td>530998</td></tr><tr><td>icesat2</td><td>height_range</td><td>530501</td></tr><tr><td>gedi</td><td>years_in_range</td><td>186224</td></tr><tr><td>gedi</td><td>inside_aoi</td><td>183956</td></tr><tr><td>gedi</td><td>not_local_outlier</td><td>183566</td></tr><tr><td>icesat2</td><td>years_in_range</td><td>530501</td></tr><tr><td>icesat2</td><td>inside_aoi</td><td>523881</td></tr><tr><td>icesat2</td><td>not_local_outlier</td><td>514165</td></tr></tbody></table></div>
+
+<h3>Predictors</h3>
+<ul>
+<li><strong>AlphaEarth Foundations annual embeddings</strong> (Google / Google DeepMind,
+CC-BY 4.0). These are 64-dimensional unit vectors per 10 m pixel and year, 2017–2025,
+summarizing Sentinel-1/2, Landsat and other inputs. We read the
+<a href="https://source.coop/tge-labs/aef">Source Cooperative copy</a> directly. The
+copy is stored bottom-up, so rows are flipped on read. The <code>small</code> profile
+reads the 20 m overview level. Other grids are derived by exact area-weighted
+averaging. Earth Engine was not available.</li>
+<li><strong>Context embedding</strong>: the AlphaEarth vector averaged over a ~90 m
+neighbourhood. It adds spatial context and absorbs GEDI's ~10 m geolocation error.</li>
+<li><strong>Terrain</strong> (Copernicus GLO-30): elevation, slope, northness/eastness,
+topographic position at 150 m and 1 km, and 1 km relief.</li>
+<li><strong>Harmonized Landsat Sentinel-2 (HLS v2.0)</strong>. Fmask-screened monthly
+medians of red, NIR, SWIR1, SWIR2, NDVI, NBR and NDMI are summarized per year
+(p10/p50/p90, dry-season medians). The monthly composites also feed the stability
+screening and the state-space model.</li>
+<li><strong>Sentinel-1 RTC</strong> γ⁰ VV/VH monthly medians and annual summaries.
+NASA's OPERA RTC-S1 was the first choice, but ASF downloads were refused for the
+account used here. Data come from the Microsoft Planetary Computer
+<code>sentinel-1-rtc</code> collection instead.</li>
+<li><strong>AVIRIS-3 imaging spectroscopy</strong> from NASA's
+<a href="https://www.earthdata.nasa.gov/data/projects/avuelo">AVUELO</a> campaign
+(8 and 11 February 2025): 94 orthorectified L2A reflectance scenes at 3.4 m over
+Azuero. They are aggregated to the grid, binned to 30 nm, and reduced to 10 principal
+components plus NDVI, NDRE, PRI, NDWI and the cellulose absorption index. They are
+tested as an experiment because they cover only part of the peninsula on one date.</li>
+</ul>
+<p><strong>What the final model uses.</strong> Cross-validation (below) settled on the
+following features:</p>
+<ul>
+<li>the AlphaEarth embedding of the observation's year;</li>
+<li>the observation's decimal year;</li>
+<li>terrain;</li>
+<li>three observation covariates: ICESat-2 vs GEDI, night vs day, and strong vs weak
+beam.</li>
+</ul>
+<p>The map is predicted on a single measurement standard: a GEDI power-beam shot at
+night, mid-year. Context embeddings, HLS, Sentinel-1 and AVIRIS-3 features did not
+improve held-out accuracy. They are reported as ablations. HLS and Sentinel-1 still feed
+the stability screening and the version-2 state-space model.</p>
+<h3>Evaluated but not used</h3>
+<ul>
+<li><strong>LVIS</strong> and other airborne lidar: none over Azuero in NASA Earthdata.</li>
+<li><strong>UAVSAR</strong>: two L-band lines (Cerro Hoya, May 2026), after the product
+period.</li>
+<li><strong>EMIT</strong>: 109 granules, mostly cloudy, at 60 m. Not used because
+AVIRIS-3 covers the same need at much finer resolution.</li>
+<li><strong>In-situ plots</strong>: no openly available Azuero plot inventory with tree
+heights was found. The PRORENA Los Santos plantation trial and STRI plots are
+described in publications, but no data deposits were found.</li>
+<li><strong>Reference maps</strong> are used only for comparison:
+<a href="https://zenodo.org/records/4624240">Global Airborne Observatory</a> 2012 1 ha
+canopy height (airborne lidar + upscaling), ETH 2020 10 m (Lang et al.), and the
+Meta/WRI 1 m CHM (Tolan et al.). Hansen GFC v1.13 loss years are used for stability
+screening.</li>
+</ul>
+</section>
+
+<section id="methods">
+<h2>Methods</h2>
+<h3>Area and grids</h3>
+<p>The area of interest is the union of the Herrera and Los Santos provinces with the
+Mariato district and mainland Montijo (Veraguas), from geoBoundaries ADM2, without
+islands. All analysis grids are in UTM 17N, with pixel edges on integer multiples of
+their resolution. <code>hls30</code> (30 m) coincides with the HLS/MGRS grid, and
+<code>aef20</code> (20 m) with AlphaEarth's native pixel edges at its first overview.
+A native 10 m grid (<code>aef10</code>) is configured for the <code>full</code> profile.</p>
+
+<h3>Sensor harmonization with stability screening</h3>
+<p>GEDI and ICESat-2 measure canopy height differently: full-waveform rh98 versus
+photon-counting relief. ICESat-2 heights are mapped onto the GEDI scale using
+near-coincident pairs (within 20 m and 1 year). A pair is only useful for
+calibration if the canopy did not change between the two acquisitions, so each pair is
+screened with independent evidence over the years it spans:</p>
+<ul>
+<li>the minimum cosine similarity between consecutive AlphaEarth embeddings, flagged
+below 0.925. That is the 2nd percentile in stable reference forest
+(GFC tree cover ≥ 90 %, no loss, ETH height ≥ 20 m);</li>
+<li>Hansen GFC loss within the span;</li>
+<li>annual HLS NBR changes &gt; 0.10 and Sentinel-1 VH changes &gt; 1.5 dB.</li>
+</ul>
+<p>The product's calibration uses the AlphaEarth and GFC checks. Of
+3,844 cross-sensor pairs,
+2.4 % were flagged by AlphaEarth and
+0.2 % by GFC loss, and
+97.5 % were kept. Adding the HLS and Sentinel-1 checks
+flags more pairs (13.1 % and
+2.0 %), keeping 84.4 %.
+But the flagged pairs do <em>not</em> disagree more than unflagged pairs; only the few
+GFC-loss pairs do. Within a year, real canopy change is rare compared with measurement
+noise and geolocation mismatch. The +0.3–0.4 m shift that the stricter screen produces
+in the calibration is selection noise, so the product keeps the simpler screen:</p>
+<div class="tablewrap"><table class="data"><thead><tr><th>check</th><th>flagged</th><th>pairs</th><th>median |ICESat-2 − GEDI| (m)</th><th>mean |ICESat-2 − GEDI| (m)</th></tr></thead><tbody><tr><td>aef</td><td>False</td><td>3744</td><td>3.56</td><td>5.39</td></tr><tr><td>aef</td><td>True</td><td>100</td><td>2.57</td><td>4.53</td></tr><tr><td>gfc</td><td>False</td><td>3834</td><td>3.54</td><td>5.37</td></tr><tr><td>gfc</td><td>True</td><td>10</td><td>6.51</td><td>6.51</td></tr><tr><td>hls</td><td>False</td><td>3341</td><td>3.55</td><td>5.44</td></tr><tr><td>hls</td><td>True</td><td>503</td><td>3.51</td><td>4.92</td></tr><tr><td>s1</td><td>False</td><td>3768</td><td>3.55</td><td>5.39</td></tr><tr><td>s1</td><td>True</td><td>76</td><td>3.13</td><td>4.28</td></tr></tbody></table></div>
+<p> Measurement noise per sensor and
+class comes from stable same-sensor repeat pairs, using Var(h₁ − h₂) = 2σ²:</p>
+<div class="tablewrap"><table class="data"><thead><tr><th>sensor</th><th>illumination</th><th>beam</th><th>stable repeat pairs</th><th>noise σ (m)</th></tr></thead><tbody><tr><td>GEDI</td><td>day</td><td>strong/power</td><td>806</td><td>3.15</td></tr><tr><td>GEDI</td><td>night</td><td>strong/power</td><td>763</td><td>3.24</td></tr><tr><td>ICESat-2</td><td>day</td><td>weak/coverage</td><td>87</td><td>4.30</td></tr><tr><td>ICESat-2</td><td>day</td><td>strong/power</td><td>417</td><td>3.71</td></tr><tr><td>ICESat-2</td><td>night</td><td>weak/coverage</td><td>795</td><td>1.48</td></tr><tr><td>ICESat-2</td><td>night</td><td>strong/power</td><td>3725</td><td>2.08</td></tr></tbody></table></div>
+<p>Night acquisitions are much less noisy for ICESat-2, and daytime solar background
+inflates its canopy heights. Three calibrations were compared per class:</p>
+<ul>
+<li>an additive offset;</li>
+<li>quantile mapping of collocated distributions;</li>
+<li>Deming (errors-in-variables) regression with the variance ratio set from the noise
+estimates.</li>
+</ul>
+<p>Cross-validation selected quantile mapping (see the table below). Deming slopes are
+poorly constrained for the noisy daytime classes:</p>
+<div class="tablewrap"><table class="data"><thead><tr><th>illumination</th><th>beam</th><th>pairs</th><th>median ICESat-2 − GEDI (m)</th><th>r</th><th>Deming a</th><th>Deming b</th></tr></thead><tbody><tr><td>day</td><td>weak</td><td>577</td><td>1.74</td><td>0.40</td><td>-4.87</td><td>1.21</td></tr><tr><td>day</td><td>strong</td><td>1380</td><td>0.64</td><td>0.48</td><td>-10.51</td><td>1.88</td></tr><tr><td>night</td><td>weak</td><td>478</td><td>-1.87</td><td>0.58</td><td>3.32</td><td>0.91</td></tr><tr><td>night</td><td>strong</td><td>1311</td><td>-1.37</td><td>0.53</td><td>1.54</td><td>1.07</td></tr></tbody></table></div>
+
+<h3>Model</h3>
+<p>One row per lidar observation, with features from that observation's calendar year
+at its grid cell. LightGBM gradient boosting (600 trees, 127 leaves) predicts the
+harmonized height. The observation covariates absorb sensor- and illumination-specific
+differences that the calibration leaves behind. The time feature captures a trend that
+the embeddings miss: models that never saw a year are biased by +1.0 m in 2020 and
+−0.6 m in 2023–2025. For years before 2019 the time feature is held at 2019.3, because the
+only earlier labels are late-2018 ICESat-2; extrapolating it produced an artificial
+coastal "loss" from 2018 to 2019. Those years differ only through their embeddings. Separate quantile models give raw 5 % and 95 % quantiles. Up to
+400 000 rows are sampled per fit in the <code>small</code> profile. A scikit-learn MLP
+was also tested. Larger models are implemented in <code>azuero.models.registry</code>
+but were not run on this VM: a spatial-context U-Net on embedding/HLS patches, a
+temporal transformer over monthly HLS/S1 sequences, and a deep ensemble with
+heteroscedastic heads. They run automatically under the <code>full</code> profile with
+a GPU.</p>
+
+<h3>Cross-validation</h3>
+<p><strong>Spatial-region CV.</strong> The peninsula is tiled into 10 km
+blocks. Occupied blocks are clustered into 15
+contiguous regions, and each of the 5 folds holds out
+3 non-adjacent regions. Training labels within
+1.5 km of any held-out label are dropped. Block sizes of 5 and
+25 km were run as sensitivity checks. <strong>Leave-one-year-out</strong> holds out all
+lidar from one year. <strong>Space × time</strong> holds out a region-fold in one year
+and trains on neither the region nor the year.</p>
+<img class="figure" src="img/folds.png" alt="Five small maps, one per fold, showing held-out lidar observations in blue">
+
+<h3>Accuracy metrics</h3>
+<p><strong>Height</strong>: RMSE, MAE, bias (prediction − observation) and R² against
+held-out lidar. GEDI-only metrics are the headline, because GEDI is the reference scale
+and its test labels do not depend on the calibration choice.
+<strong>Change</strong> (the growth-rate metric) is scored three ways:</p>
+<ul>
+<li><em>pair change</em>: same-sensor observations within 20 m and ≥ 0.75 yr apart,
+comparing observed and predicted rates in m/yr;</li>
+<li><em>block change</em>: per 2 km block and consecutive-year pair, the change in mean
+observed height versus the change in mean predicted height <em>at the same
+observations</em>. Sample matching cancels footprint-placement differences;</li>
+<li><em>disturbance detection</em>: recall and precision for observed drops &gt; 10 m.</li>
+</ul>
+<p>Change is judged correct if the difference is right, even if the absolute baseline
+is biased.</p>
+
+<h3>Uncertainty</h3>
+<p><strong>Height.</strong> Raw quantiles are calibrated with Mondrian conformalized
+quantile regression. The offsets are computed per bin of predicted height from
+out-of-fold residuals and cross-fitted, so reported coverage is out of sample. The
+interval refers to a GEDI-equivalent rh98 measurement at the cell, so it includes lidar
+measurement noise. The product's SD is this calibrated SD. The Kalman smoother's own
+posterior SD is <em>not</em> used: it assumes independent annual errors, while a
+pixel's errors are strongly correlated across years, so it would be overconfident.</p>
+<p><strong>Change.</strong> The SD of a 1-year change is estimated empirically from
+held-out lidar pairs 0.75–1.5 years apart, scored on the smoothed map predictions.
+Each pair's own label noise (class-specific σ) is subtracted:</p>
+<div class="tablewrap"><table class="data"><thead><tr><th>canopy height (m)</th><th>held-out pairs</th><th>1-year change SD (m)</th></tr></thead><tbody><tr><td>&lt; 5</td><td>6153</td><td>7.05</td></tr><tr><td>5–10</td><td>9315</td><td>6.23</td></tr><tr><td>10–15</td><td>5735</td><td>6.02</td></tr><tr><td>15–20</td><td>2294</td><td>6.54</td></tr><tr><td>20–25</td><td>776</td><td>7.01</td></tr><tr><td>25+</td><td>754</td><td>8.80</td></tr></tbody></table></div>
+
+<h3>Temporal consistency</h3>
+<p>Annual predictions are combined per pixel with a robust Kalman filter and
+Rauch–Tung–Striebel smoother:</p>
+<ul>
+<li>the state is a local linear trend (height, growth rate);</li>
+<li>observation variances come from the calibrated intervals, minus GEDI noise;</li>
+<li>a large negative innovation (&gt; 2.5σ) inflates the process variance for that step,
+so clearing appears as a jump instead of being smoothed away.</li>
+</ul>
+<p>For evaluation, the smoother runs on out-of-fold <em>panel</em> predictions: every
+year at every held-out cell, predicted by that fold's model on the product's measurement
+standard. Its parameters were tuned on folds 0–2 and checked on folds 3–4:
+q<sub>h</sub> = 1.0, q<sub>g</sub> = 0.09, jump threshold
+3.0σ, observation-variance scale 0.5. The objective
+was nearly flat across the grid.</p>
+
+<h3>Resource profiles</h3>
+<p>Everything specific to this small VM (4 CPUs, 15 GB RAM, ~30 GB disk) is a separate
+toggle in <code>config.yaml</code>. The <code>small</code>/<code>full</code> profile sets
+them all at once. The toggles:</p>
+<ul>
+<li>deleting raw downloads after compositing;</li>
+<li>the AlphaEarth read level (20 m overview vs native 10 m);</li>
+<li>one-year feature stacks;</li>
+<li>workers and threads (LightGBM is limited to 2 threads to avoid OpenMP
+oversubscription);</li>
+<li>training subsample size;</li>
+<li>HLS cloud and band limits;</li>
+<li>Sentinel-1 scene caps;</li>
+<li>GPU and large-model switches.</li>
+</ul>
+</section>
+
+<section id="results">
+<h2>Results: height</h2>
+<div class="grid2"><div id="fig-scatter-gedi"></div><div id="fig-scatter-is2"></div></div>
+<div id="fig-byclass"></div>
+<p>Like every regression-based canopy-height map, the model compresses the extremes:
+it overestimates short canopies and underestimates the tallest (&gt; 30 m)
+canopies. Part of this is regression dilution from label noise (σ ≈ 3 m for GEDI). The
+bias by class shows how much.</p>
+<h3>Ablations (spatial-region CV)</h3>
+<div class="tablewrap"><table class="data"><thead><tr><th>configuration</th><th>RMSE vs GEDI (m)</th><th>bias vs GEDI (m)</th><th>R² vs GEDI</th><th>RMSE vs ICESat-2 (m)</th><th>block change r</th></tr></thead><tbody><tr><td>Final + HLS + Sentinel-1 (20 m)</td><td>5.50</td><td>0.01</td><td>0.67</td><td>6.09</td><td>0.57</td></tr><tr class="highlight"><td>Final: AlphaEarth + time + terrain + observation covariates (20 m)</td><td>5.51</td><td>0.01</td><td>0.67</td><td>6.09</td><td>0.57</td></tr><tr><td>AlphaEarth (20 m native grid)</td><td>5.58</td><td>0.01</td><td>0.66</td><td>6.20</td><td>0.50</td></tr><tr><td>AlphaEarth + time + terrain + observation covariates (30 m)</td><td>5.61</td><td>0.01</td><td>0.66</td><td>6.17</td><td>0.55</td></tr><tr><td>Final features on the 30 m HLS grid</td><td>5.61</td><td>0.01</td><td>0.66</td><td>6.17</td><td>0.55</td></tr><tr><td>AlphaEarth + time + observation covariates</td><td>5.64</td><td>-0.01</td><td>0.66</td><td>6.19</td><td>0.54</td></tr><tr><td>AlphaEarth + context + terrain</td><td>5.66</td><td>0.05</td><td>0.65</td><td>6.25</td><td>0.50</td></tr><tr><td>AlphaEarth, GEDI labels only</td><td>5.67</td><td>-0.04</td><td>0.65</td><td>–</td><td>0.49</td></tr><tr><td>AlphaEarth + observation covariates</td><td>5.68</td><td>0.03</td><td>0.65</td><td>6.27</td><td>0.49</td></tr><tr><td>AlphaEarth + AVIRIS-3</td><td>5.68</td><td>0.03</td><td>0.65</td><td>6.27</td><td>0.50</td></tr><tr><td>AlphaEarth + 90 m context</td><td>5.68</td><td>0.03</td><td>0.65</td><td>6.28</td><td>0.49</td></tr><tr><td>AlphaEarth, MLP instead of LightGBM</td><td>5.75</td><td>0.06</td><td>0.64</td><td>6.60</td><td>0.47</td></tr><tr><td>AlphaEarth + time trend</td><td>5.81</td><td>-0.01</td><td>0.64</td><td>6.39</td><td>0.49</td></tr><tr><td>AlphaEarth + terrain</td><td>5.94</td><td>-0.18</td><td>0.62</td><td>6.48</td><td>0.44</td></tr><tr><td>AlphaEarth, unweighted</td><td>5.95</td><td>0.04</td><td>0.62</td><td>6.49</td><td>0.44</td></tr><tr><td>AlphaEarth (30 m)</td><td>5.96</td><td>-0.19</td><td>0.62</td><td>6.50</td><td>0.44</td></tr><tr><td>AlphaEarth, Deming calibration</td><td>6.06</td><td>-0.32</td><td>0.60</td><td>7.30</td><td>0.37</td></tr><tr><td>AlphaEarth, offset calibration</td><td>6.22</td><td>-0.92</td><td>0.58</td><td>5.34</td><td>0.42</td></tr><tr><td>AlphaEarth, no sensor calibration</td><td>6.36</td><td>-1.64</td><td>0.56</td><td>5.67</td><td>0.35</td></tr></tbody></table></div>
+<p class="small muted">Rows are sorted by RMSE against held-out GEDI. The final
+configuration is in bold. Block change r is the correlation of year-to-year changes in
+2 km block means (raw annual predictions).</p>
+<h3>CV design and temporal transfer</h3>
+<div class="tablewrap"><table class="data"><thead><tr><th>design</th><th>RMSE all labels (m)</th><th>RMSE vs GEDI (m)</th><th>R² vs GEDI</th></tr></thead><tbody><tr><td>AlphaEarth (30 m)</td><td>6.36</td><td>5.96</td><td>0.62</td></tr><tr><td>AlphaEarth, 25 km blocks</td><td>6.12</td><td>5.68</td><td>0.65</td></tr><tr><td>AlphaEarth, 5 km blocks</td><td>6.11</td><td>5.68</td><td>0.65</td></tr><tr><td>AlphaEarth, space × time hold-out</td><td>6.25</td><td>5.74</td><td>0.64</td></tr><tr><td>AlphaEarth, leave-one-year-out</td><td>6.20</td><td>5.70</td><td>0.65</td></tr></tbody></table></div>
+<div id="fig-byyear"></div>
+<p>Leave-one-year-out shows how well the model predicts a year it has never seen. This
+is also how 2017, which has no lidar at all, is mapped. 2018 has only three months of
+ICESat-2.</p>
+<h3>AVIRIS-3 (AVUELO) experiment</h3><div class="tablewrap"><table class="data"><thead><tr><th>subset</th><th>model</th><th>n</th><th>RMSE (m)</th><th>bias (m)</th><th>R²</th></tr></thead><tbody><tr><td>2025, inside AVIRIS-3 coverage</td><td>AlphaEarth</td><td>10494</td><td>6.39</td><td>-0.34</td><td>0.60</td></tr><tr><td>2025, inside AVIRIS-3 coverage</td><td>AlphaEarth + AVIRIS-3</td><td>10494</td><td>6.37</td><td>0.29</td><td>0.60</td></tr><tr><td>2025, outside coverage</td><td>AlphaEarth</td><td>81072</td><td>6.05</td><td>-0.25</td><td>0.52</td></tr><tr><td>2025, outside coverage</td><td>AlphaEarth + AVIRIS-3</td><td>81072</td><td>6.06</td><td>-0.30</td><td>0.52</td></tr></tbody></table></div><p>Both models are scored on the same held-out 2025 lidar. The comparison is reported separately inside and outside the February 2025 flight coverage.</p>
+<h3>Comparison with other canopy-height maps</h3>
+<div class="tablewrap"><table class="data"><thead><tr><th>reference</th><th>product year</th><th>cells (100 m)</th><th>mean difference (m)</th><th>RMSD (m)</th><th>r</th></tr></thead><tbody><tr><td>GAO 2012 (airborne lidar + upscaling, 1 ha)</td><td>2017</td><td>749023</td><td>7.31</td><td>8.54</td><td>0.84</td></tr><tr><td>ETH 2020 (Lang et al., 10 m)</td><td>2020</td><td>678169</td><td>-2.64</td><td>4.96</td><td>0.83</td></tr></tbody></table></div>
+</section>
+
+<section id="change">
+<h2>Results: change</h2>
+<p>Annual height change is a much harder target than height. Two GEDI shots within
+20 m of each other already differ by a noise SD of about 4.5 m, while
+typical regrowth is 0.5–2 m/yr. Pair-level skill is therefore limited by the labels as
+much as by the model. Block-level change averages much of that noise out.</p>
+<p>The rows that describe the <strong>map</strong> are the standardized ("panel")
+predictions. The first rows score the annual model with each observation's own
+sensor, illumination and date. They show higher pair-level change skill, but part of that
+comes from changes in measurement conditions between the two observations, not from
+canopy change. The fairest test of the product is the smoothed panel on GEDI night
+power-beam shots.</p>
+<div class="tablewrap"><table class="data"><thead><tr><th>predictions — labels</th><th>height RMSE (m)</th><th>pair rate r</th><th>pair rate RMSE (m/yr)</th><th>drop recall</th><th>drop precision</th><th>block change r</th><th>block change RMSE (m)</th></tr></thead>
+<tbody><tr><td>Annual model, conditioned on each observation&#x27;s sensor/date — all labels</td><td>5.94</td><td>0.27</td><td>4.31</td><td>0.13</td><td>0.21</td><td>0.57</td><td>3.46</td></tr><tr><td>Annual model, conditioned on each observation&#x27;s sensor/date — GEDI</td><td>5.51</td><td>0.17</td><td>3.91</td><td>0.11</td><td>0.21</td><td>0.51</td><td>2.63</td></tr><tr><td>Annual model, conditioned on each observation&#x27;s sensor/date — GEDI night, power beams</td><td>5.51</td><td>0.17</td><td>3.20</td><td>0.06</td><td>0.15</td><td>0.63</td><td>2.72</td></tr><tr><td>Annual map predictions (standardized), unsmoothed — all labels</td><td>6.40</td><td>0.11</td><td>4.50</td><td>0.07</td><td>0.17</td><td>0.43</td><td>3.86</td></tr><tr><td>Annual map predictions (standardized), unsmoothed — GEDI</td><td>5.55</td><td>0.11</td><td>3.98</td><td>0.08</td><td>0.17</td><td>0.46</td><td>2.75</td></tr><tr><td>Annual map predictions (standardized), unsmoothed — GEDI night, power beams</td><td>5.57</td><td>0.17</td><td>3.21</td><td>0.07</td><td>0.14</td><td>0.56</td><td>2.91</td></tr><tr><td>Annual map predictions, Kalman-smoothed (the product) — all labels</td><td>6.32</td><td>0.13</td><td>4.44</td><td>0.05</td><td>0.21</td><td>0.45</td><td>3.78</td></tr><tr><td>Annual map predictions, Kalman-smoothed (the product) — GEDI</td><td>5.46</td><td>0.18</td><td>3.84</td><td>0.03</td><td>0.20</td><td>0.50</td><td>2.64</td></tr><tr><td>Annual map predictions, Kalman-smoothed (the product) — GEDI night, power beams</td><td>5.50</td><td>0.23</td><td>3.11</td><td>0.03</td><td>0.27</td><td>0.61</td><td>2.76</td></tr><tr><td>Direct change model trained on lidar pairs — all labels</td><td>–</td><td>0.19</td><td>4.47</td><td>0.06</td><td>0.15</td><td>–</td><td>–</td></tr></tbody></table></div>
+<p class="small muted">On all labels there are 99,263 held-out lidar pairs and
+3,205 block-year pairs. The direct change model (embedding differences →
+Δheight) is scored on the same all-label pairs. It reaches the best pair-level rate
+correlation, but it is not used for the map because its changes would not be consistent
+with the annual heights. Large drops (&gt; 10 m) are rarely recovered by any method:
+annual predictions understate clearings.</p>
+<div id="fig-area"></div>
+<div id="fig-stats"></div>
+</section>
+
+<section id="uncertainty">
+<h2>Results: uncertainty</h2>
+<div id="fig-reliability"></div>
+<p>The raw LightGBM 90 % quantile intervals covered 86.5 %
+of held-out labels. After conformal calibration the cross-fitted coverage is
+90.0 %, with a mean width of
+16.7 m. Coverage is lower for the tallest observed canopies,
+which is the regression-to-the-mean effect seen in the height results.</p>
+</section>
+
+<section id="v2">
+<h2>Version 2: monthly state-space model</h2>
+<p>After version 1, a per-pixel <strong>monthly</strong> state-space model was built
+(<code>azuero.ssm</code>). Its state is canopy height, growth rate, and two slowly
+varying bias terms for the optical and radar observation operators. It takes four kinds
+of observations:</p>
+<ul>
+<li><em>lidar</em> (GEDI / ICESat-2, calibrated): identity observation operator, with
+the class-specific label noise;</li>
+<li>the <em>v1 annual prediction</em>: placed at July, with its model-error variance;</li>
+<li><em>HLS</em> monthly composites: mapped to height by a LightGBM operator trained on
+lidar from the same month;</li>
+<li><em>Sentinel-1</em> monthly composites: mapped the same way.</li>
+</ul>
+<p>The operators' errors are split into a persistent per-pixel bias, estimated from
+residual pairs at the same place in different months, and month-to-month noise. That
+way the filter does not treat 108 correlated monthly errors as independent evidence.
+Disturbances use the same robust jump mechanism as version 1. In cross-validation, the
+held-out cells' lidar is withheld and the smoothed monthly height is scored at each
+held-out observation's month.</p>
+<div class="tablewrap"><table class="data"><thead><tr><th>model</th><th>RMSE (m)</th><th>bias (m)</th><th>pair rate r</th><th>drop recall</th><th>block change r</th></tr></thead><tbody><tr><td>v1: Kalman-smoothed annual predictions</td><td>5.50</td><td>-0.16</td><td>0.23</td><td>0.03</td><td>0.61</td></tr><tr><td>Monthly SSM (v1 annual + HLS + S1)</td><td>5.76</td><td>-0.65</td><td>0.21</td><td>0.01</td><td>0.60</td></tr><tr><td>3-monthly SSM (v1 annual + HLS + S1)</td><td>5.76</td><td>-0.66</td><td>0.21</td><td>0.01</td><td>0.60</td></tr><tr><td>Monthly SSM, v1 annual predictions only</td><td>5.50</td><td>-0.21</td><td>0.24</td><td>0.02</td><td>0.61</td></tr></tbody></table></div>
+<p class="small muted">All rows are scored on held-out GEDI night power-beam shots,
+with no held-out lidar used by any model.</p>
+</section>
+
+<section id="limitations">
+<h2>Limitations</h2>
+<ul>
+<li>The cross-validated accuracy is a lower bound for mapping unseen regions. It is not
+an accuracy for each pixel in each year.</li>
+<li>There is no independent airborne lidar or field data for Azuero, so "truth" is
+spaceborne lidar with σ ≈ 2–4 m noise and ~10 m geolocation error.</li>
+<li>AlphaEarth embeddings are produced by a model whose training may have included GEDI.
+The spatial hold-outs still test generalization to unseen places.</li>
+<li>2017 has no lidar and 2018 has only October–December ICESat-2. Their quality
+flags (2 and 1) mark that, and their time feature is held at the 2019 value.</li>
+<li>Pixel-level annual change is very uncertain (1 SD ≈ 6–9 m for one year). Use block
+or landscape aggregates, or multi-year differences, for growth rates. Clearings are
+under-detected.</li>
+<li>The 20 m pixels are finer than a GEDI footprint (25 m) or an ICESat-2 segment
+(30 m along track). The effective resolution is closer to the lidar footprint.</li>
+</ul>
+</section>
+
+<section id="downloads">
+<h2>Downloads and reproducibility</h2>
+<p>The yearly products are Cloud-Optimized GeoTIFFs in UTM 17N (EPSG:32617). Three
+files per year, with the scale factor stored in each file:</p>
+<ul>
+<li><code>azuero_canopy_height_YEAR.tif</code>: smoothed canopy height (rh98-equivalent)
+on the 20 m AlphaEarth grid, uint8 × 0.5 m, nodata 255;</li>
+<li><code>azuero_canopy_height_YEAR_sd.tif</code>: calibrated 1 SD of height, averaged to
+100 m, uint8 × 0.1 m. The 90 % interval is height ± 1.645 SD;</li>
+<li><code>azuero_canopy_height_YEAR_change.tif</code>: change from the previous year
+(smoothed), averaged to 100 m, int8 × 0.1 m, nodata −128. Pixel-level annual change is too
+uncertain to publish at 20 m (see the change-uncertainty table); averaging over 25 pixels
+reduces random error, although errors are spatially correlated.</li>
+</ul>
+<p>Quality flag by year: 0 = lidar year (2019–2025), 1 = partial lidar year (2018),
+2 = no lidar (2017). The full-precision rasters (int16 × 0.01 m, all bands) are
+regenerated with <code>azuero product v1_aef20</code>.</p>
+<ul><li>2017: <a href="data/cogs/azuero_canopy_height_2017.tif">height</a> · <a href="data/cogs/azuero_canopy_height_2017_sd.tif">SD</a></li><li>2018: <a href="data/cogs/azuero_canopy_height_2018.tif">height</a> · <a href="data/cogs/azuero_canopy_height_2018_sd.tif">SD</a> · <a href="data/cogs/azuero_canopy_height_2018_change.tif">change</a></li><li>2019: <a href="data/cogs/azuero_canopy_height_2019.tif">height</a> · <a href="data/cogs/azuero_canopy_height_2019_sd.tif">SD</a> · <a href="data/cogs/azuero_canopy_height_2019_change.tif">change</a></li><li>2020: <a href="data/cogs/azuero_canopy_height_2020.tif">height</a> · <a href="data/cogs/azuero_canopy_height_2020_sd.tif">SD</a> · <a href="data/cogs/azuero_canopy_height_2020_change.tif">change</a></li><li>2021: <a href="data/cogs/azuero_canopy_height_2021.tif">height</a> · <a href="data/cogs/azuero_canopy_height_2021_sd.tif">SD</a> · <a href="data/cogs/azuero_canopy_height_2021_change.tif">change</a></li><li>2022: <a href="data/cogs/azuero_canopy_height_2022.tif">height</a> · <a href="data/cogs/azuero_canopy_height_2022_sd.tif">SD</a> · <a href="data/cogs/azuero_canopy_height_2022_change.tif">change</a></li><li>2023: <a href="data/cogs/azuero_canopy_height_2023.tif">height</a> · <a href="data/cogs/azuero_canopy_height_2023_sd.tif">SD</a> · <a href="data/cogs/azuero_canopy_height_2023_change.tif">change</a></li><li>2024: <a href="data/cogs/azuero_canopy_height_2024.tif">height</a> · <a href="data/cogs/azuero_canopy_height_2024_sd.tif">SD</a> · <a href="data/cogs/azuero_canopy_height_2024_change.tif">change</a></li><li>2025: <a href="data/cogs/azuero_canopy_height_2025.tif">height</a> · <a href="data/cogs/azuero_canopy_height_2025_sd.tif">SD</a> · <a href="data/cogs/azuero_canopy_height_2025_change.tif">change</a></li></ul>
+<pre>uv venv &amp;&amp; uv pip install -e '.[dev]'
+azuero aoi &amp;&amp; azuero lidar &amp;&amp; azuero alphaearth &amp;&amp; azuero aefctx &amp;&amp; azuero dem
+azuero hls &amp;&amp; azuero s1 &amp;&amp; azuero airborne &amp;&amp; azuero reference
+azuero labels &amp;&amp; azuero calibrate
+azuero cv v1_aef20 --grid aef20 --sets aef time dem --obs-covariates   # final config CV
+azuero product v1_aef20                       # train on all data, predict, calibrate, smooth
+azuero ssm-cv v1_aef20 --name ssm_monthly     # version 2
+azuero site --final v1_aef20 --product final_v1_aef20</pre>
+</section>
+
+<footer>
+<p>Data credits: The AlphaEarth Foundations Satellite Embedding dataset is produced by
+Google and Google DeepMind (CC-BY 4.0). GEDI, ICESat-2, HLS, AVIRIS-3/AVUELO: NASA (via
+NASA Earthdata and SlideRule Earth). Sentinel-1 RTC: ESA Copernicus via Microsoft
+Planetary Computer. Copernicus DEM GLO-30 © DLR/Airbus. Hansen GFC v1.13 (UMD).
+Global Airborne Observatory Panama map (Asner et al., CC-BY 4.0). ETH Global Canopy
+Height 2020 (Lang et al.). Meta/WRI CHM (Tolan et al.). Boundaries: geoBoundaries
+(STRI).</p>
+</footer>
+</main>
+<script>window.RESULTS = {"labels_by_year": {"years": [2018, 2019, 2020, 2021, 2022, 2023, 2024, 2025], "gedi": [0, 29191, 33700, 36539, 27974, 10523, 15824, 29815], "icesat2": [18710, 95076, 87521, 32490, 68386, 82739, 67487, 61756]}, "scatter_gedi": {"edges": [0.0, 2.0, 4.0, 6.0, 8.0, 10.0, 12.0, 14.0, 16.0, 18.0, 20.0, 22.0, 24.0, 26.0, 28.0, 30.0, 32.0, 34.0, 36.0, 38.0, 40.0], "z": [[0, 0, 0, 2, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0], [207, 10590, 9048, 4436, 2035, 913, 374, 165, 63, 23, 16, 12, 6, 4, 2, 0, 0, 0, 0, 0], [3, 1009, 3776, 4747, 3800, 2334, 1308, 603, 290, 120, 57, 28, 11, 8, 5, 2, 1, 0, 0, 0], [0, 332, 1864, 3614, 3989, 3119, 2125, 1172, 603, 270, 133, 57, 21, 25, 10, 4, 2, 2, 1, 1], [0, 148, 1048, 2404, 3316, 3287, 2535, 1597, 899, 448, 210, 99, 60, 29, 18, 9, 6, 5, 1, 0], [0, 65, 539, 1567, 2676, 3058, 2613, 1891, 1075, 580, 308, 145, 98, 54, 25, 15, 11, 6, 5, 0], [0, 23, 261, 850, 1846, 2484, 2551, 2137, 1312, 813, 388, 219, 131, 71, 32, 29, 18, 8, 3, 3], [0, 8, 105, 470, 1187, 1890, 2286, 2089, 1555, 989, 581, 326, 183, 130, 64, 40, 20, 14, 11, 2], [0, 4, 48, 213, 761, 1293, 1883, 1889, 1660, 1235, 830, 485, 240, 185, 104, 63, 33, 21, 13, 1], [0, 2, 21, 118, 367, 874, 1369, 1609, 1616, 1355, 952, 587, 415, 233, 141, 86, 52, 19, 10, 1], [0, 0, 13, 56, 191, 560, 944, 1206, 1392, 1251, 1044, 754, 487, 333, 241, 151, 85, 40, 13, 4], [0, 0, 3, 22, 98, 281, 537, 835, 934, 1039, 951, 850, 596, 438, 260, 193, 117, 53, 29, 11], [0, 0, 0, 7, 46, 132, 306, 481, 688, 850, 836, 768, 643, 460, 365, 183, 151, 83, 36, 9], [0, 0, 0, 2, 17, 65, 154, 288, 399, 521, 633, 628, 535, 550, 393, 261, 179, 117, 40, 16], [0, 0, 0, 0, 9, 27, 58, 127, 255, 322, 434, 473, 506, 478, 429, 312, 211, 134, 69, 22], [0, 0, 0, 0, 4, 15, 37, 74, 120, 203, 266, 322, 407, 414, 425, 376, 248, 115, 66, 32], [0, 0, 0, 0, 3, 7, 19, 25, 57, 102, 155, 212, 348, 383, 334, 347, 220, 152, 76, 24], [0, 0, 1, 1, 2, 2, 10, 24, 40, 45, 93, 130, 201, 236, 303, 284, 231, 146, 70, 29], [0, 0, 0, 0, 2, 3, 3, 8, 15, 35, 53, 92, 117, 163, 208, 233, 210, 175, 68, 42], [0, 0, 0, 0, 0, 2, 1, 7, 8, 17, 16, 32, 80, 118, 157, 177, 155, 141, 81, 34]]}, "scatter_icesat2": {"edges": [0.0, 2.0, 4.0, 6.0, 8.0, 10.0, 12.0, 14.0, 16.0, 18.0, 20.0, 22.0, 24.0, 26.0, 28.0, 30.0, 32.0, 34.0, 36.0, 38.0, 40.0], "z": [[0, 22, 293, 171, 32, 8, 1, 1, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0], [50, 15756, 44555, 35988, 14948, 6064, 2755, 1185, 592, 275, 149, 92, 79, 25, 12, 7, 8, 0, 2, 1], [4, 1887, 12620, 19949, 13688, 7518, 3739, 1745, 809, 421, 198, 117, 71, 30, 17, 8, 5, 1, 1, 1], [1, 554, 6298, 13104, 12502, 8618, 5019, 2667, 1288, 586, 325, 167, 100, 46, 20, 12, 3, 1, 1, 2], [0, 323, 4257, 10001, 11101, 8995, 6173, 3491, 1841, 961, 470, 282, 139, 63, 34, 9, 1, 4, 2, 0], [0, 217, 2954, 7305, 9396, 9121, 7041, 4584, 2579, 1384, 751, 382, 222, 97, 35, 9, 11, 3, 0, 0], [0, 96, 1469, 4035, 5634, 6297, 5580, 4130, 2483, 1324, 746, 456, 224, 88, 41, 11, 6, 5, 2, 2], [0, 57, 932, 3001, 4579, 6000, 6098, 5055, 3475, 2208, 1273, 706, 400, 194, 79, 32, 12, 6, 2, 1], [0, 28, 579, 1801, 2757, 4019, 4812, 4698, 3565, 2376, 1499, 886, 422, 238, 117, 46, 18, 7, 1, 1], [0, 19, 323, 984, 1361, 2101, 2807, 2949, 2600, 2004, 1247, 773, 437, 213, 108, 31, 11, 5, 1, 0], [0, 10, 283, 888, 1230, 1825, 2429, 2900, 2506, 2161, 1518, 977, 597, 321, 128, 42, 22, 4, 5, 1], [0, 10, 197, 555, 681, 1005, 1485, 1922, 1971, 1830, 1495, 1088, 701, 345, 153, 59, 15, 7, 1, 1], [0, 4, 155, 392, 442, 594, 977, 1304, 1534, 1546, 1535, 1165, 783, 464, 224, 105, 41, 10, 3, 5], [0, 4, 104, 295, 271, 313, 471, 664, 772, 751, 843, 713, 580, 304, 180, 69, 26, 6, 7, 2], [0, 2, 47, 122, 144, 214, 275, 468, 542, 638, 658, 690, 553, 368, 207, 83, 34, 14, 4, 0], [0, 5, 38, 50, 59, 83, 132, 198, 281, 399, 390, 382, 361, 287, 127, 97, 43, 25, 5, 2], [0, 5, 28, 52, 46, 84, 96, 148, 222, 343, 483, 571, 544, 434, 275, 163, 81, 44, 24, 5], [0, 2, 20, 35, 46, 52, 68, 94, 143, 195, 293, 340, 402, 361, 256, 159, 90, 48, 20, 13], [0, 4, 17, 28, 37, 39, 39, 49, 93, 113, 149, 246, 247, 204, 170, 117, 89, 63, 39, 14], [0, 3, 13, 29, 41, 31, 33, 26, 72, 75, 106, 157, 185, 152, 136, 103, 79, 72, 44, 31]]}, "by_class": {"labels": ["0\u20135", "5\u201310", "10\u201315", "15\u201320", "20\u201325", "25\u201330", ">30"], "rmse": [4.32, 4.39, 4.32, 5.42, 7.24, 8.98, 15.6], "bias": [3.32, 2.36, -0.16, -2.37, -4.64, -6.45, -11.62], "n": [191767, 173178, 128879, 90405, 56852, 27938, 28622]}, "temporal": {"subset": {"oof": "gedi_night_power", "panel_raw": "gedi_night_power", "panel_smooth": "gedi_night_power"}, "n": {"oof": 112786, "panel_raw": 112786, "panel_smooth": 112786}, "rmse": {"oof": 5.506054665500334, "panel_raw": 5.566038596693365, "panel_smooth": 5.49605575053664}, "mae": {"oof": 3.926549936627559, "panel_raw": 3.9947005284243184, "panel_smooth": 3.9155935627995646}, "bias": {"oof": -0.012057320704097534, "panel_raw": 0.027328835818461995, "panel_smooth": -0.15712837099849955}, "r2": {"oof": 0.6724958235231278, "panel_raw": 0.6653211777303984, "panel_smooth": 0.6736842290941685}, "r": {"oof": 0.8200955674650124, "panel_raw": 0.815965424197256, "panel_smooth": 0.8220720717601343}, "slope_obs_on_pred": {"oof": 1.0094826390020393, "panel_raw": 1.0273040740903043, "panel_smooth": 1.0552339918699027}, "obs_mean": {"oof": 13.375252249183038, "panel_raw": 13.375252249183038, "panel_smooth": 13.375252249183038}, "pair_rate_n": {"oof": 3246, "panel_raw": 3246, "panel_smooth": 3246}, "pair_rate_rmse": {"oof": 3.203901199694396, "panel_raw": 3.2055367285127767, "panel_smooth": 3.1113944398484303}, "pair_rate_mae": {"oof": 2.0403071612529993, "panel_raw": 2.049142482041149, "panel_smooth": 1.9774282507409036}, "pair_rate_bias": {"oof": 0.08887494979398206, "panel_raw": 0.044576560393012186, "panel_smooth": 0.05558943543345053}, "pair_rate_r2": {"oof": -0.0027600897209758557, "panel_raw": -0.00378412980669407, "panel_smooth": 0.05430965975222435}, "pair_rate_r": {"oof": 0.17169640680859893, "panel_raw": 0.16555185020442292, "panel_smooth": 0.23395403866186035}, "pair_rate_slope_obs_on_pred": {"oof": 0.4918413382319872, "panel_raw": 0.4846185052332529, "panel_smooth": 0.9547477471962721}, "pair_rate_obs_mean": {"oof": -0.031150708240288375, "panel_raw": -0.031150708240288375, "panel_smooth": -0.031150708240288375}, "pair_delta_rmse": {"oof": 6.689963162363987, "panel_raw": 6.742511101973043, "panel_smooth": 6.567828550987872}, "pair_delta_bias": {"oof": 0.19265922856171433, "panel_raw": 0.06916598166021072, "panel_smooth": 0.10506153017629043}, "pair_delta_r": {"oof": 0.19270889362198862, "panel_raw": 0.16921868512969693, "panel_smooth": 0.2139917051984491}, "pair_drop_n": {"oof": 214, "panel_raw": 214, "panel_smooth": 214}, "pair_drop_recall": {"oof": 0.06074766355140187, "panel_raw": 0.06542056074766354, "panel_smooth": 0.03271028037383177}, "pair_drop_precision": {"oof": 0.14606741573033707, "panel_raw": 0.14, "panel_smooth": 0.2692307692307692}, "pair_n_pairs": {"oof": 3246, "panel_raw": 3246, "panel_smooth": 3246}, "block_n": {"oof": 175, "panel_raw": 175, "panel_smooth": 175}, "block_rmse": {"oof": 2.717168638397476, "panel_raw": 2.913604804549248, "panel_smooth": 2.7564233511210645}, "block_bias": {"oof": -0.20850525632461117, "panel_raw": -0.3823380064716777, "panel_smooth": -0.0447768881780563}, "block_r": {"oof": 0.6271157866031908, "panel_raw": 0.5649149875095411, "panel_smooth": 0.607538899674625}, "block_obs_sd": {"oof": 3.4796935303612218, "panel_raw": 3.4796935303612218, "panel_smooth": 3.4796935303612218}}, "base_year_by_year": {"year": [2018, 2019, 2020, 2021, 2022, 2023, 2024, 2025], "rmse": [7.516495676893332, 5.927568042203039, 6.387692242774191, 5.678260121000035, 6.122948315475442, 5.829189930038897, 6.775918633072853, 6.268572496209696], "bias": [0.21841241829804883, 0.655660490071656, 1.0332582345639263, 0.04807630433170712, 0.33184662102757095, -0.7010877742665695, -0.618958067832351, -0.6108771739979807], "r2": [0.27465963666862225, 0.5364808652622095, 0.4697763444364713, 0.5568880525858472, 0.5381337702949984, 0.5123894772163018, 0.41931939551528763, 0.5176441551622286], "n": [18709, 124265, 121218, 69025, 96358, 93261, 83309, 91566]}, "base_spacetime_by_year": {"year": [2018, 2019, 2020, 2021, 2022, 2023, 2024, 2025], "rmse": [7.552312793302502, 5.979853391184224, 6.454868640088761, 5.7384395619945545, 6.1629111379165264, 5.902508011140251, 6.819978411229384, 6.315054676743579], "bias": [0.2902946378042808, 0.6655778009209488, 1.1118337145836885, 0.11904263136208204, 0.36978907917329706, -0.768116225489747, -0.5937732413948665, -0.6108959304588385], "r2": [0.2677304772571276, 0.5282676669910431, 0.4585654703700631, 0.5474458868578466, 0.5320851444856114, 0.5000462529501679, 0.4117432007791686, 0.5104641860601722], "n": [18709, 124265, 121218, 69025, 96358, 93261, 83309, 91566]}, "space_by_year": {"year": [2018, 2019, 2020, 2021, 2022, 2023, 2024, 2025], "rmse": [7.353998994779438, 5.6668649908942434, 6.021219340901831, 5.538461218676288, 5.919336456875142, 5.662959305443964, 6.542939216029843, 5.8714729589382015], "bias": [0.008057509571898202, 0.07266888349798285, 0.2043068523040202, -0.10532686820645425, 0.02849622590508256, -0.10677590713051638, 0.06478654754508707, 0.028417149874829475], "r2": [0.3056768600256756, 0.5763541671755558, 0.5289108767335542, 0.578608556618297, 0.5683464536363069, 0.5398522624122994, 0.4585870682183547, 0.5768388462035532], "n": [18710, 124267, 121221, 69029, 96360, 93262, 83311, 91571]}, "reliability": {"nominal": [0.5, 0.68, 0.8, 0.9, 0.95], "empirical": [0.4818805528204996, 0.6918310924983984, 0.8216948938774399, 0.9085363843658946, 0.9442005586680253]}, "cqr": {"level": 0.9, "coverage_raw": 0.8647258040706232, "coverage_crossfit": 0.9002050933669279, "width_raw": 15.879840096255005, "width_crossfit": 16.72747010874044}, "product_stats": [{"year": 2017, "mean_height": 13.097, "median_height": 11.33, "area_ge_10m_kha": 428.251, "area_ge_20m_kha": 139.804, "mean_sd": 5.114, "mean_change": NaN, "area_loss_gt5m_ha": 0.0}, {"year": 2018, "mean_height": 13.074, "median_height": 11.36, "area_ge_10m_kha": 429.945, "area_ge_20m_kha": 138.441, "mean_sd": 4.891, "mean_change": -0.023, "area_loss_gt5m_ha": 2.4}, {"year": 2019, "mean_height": 13.071, "median_height": 11.41, "area_ge_10m_kha": 432.109, "area_ge_20m_kha": 137.16, "mean_sd": 5.097, "mean_change": -0.003, "area_loss_gt5m_ha": 10.4}, {"year": 2020, "mean_height": 13.024, "median_height": 11.42, "area_ge_10m_kha": 433.237, "area_ge_20m_kha": 135.088, "mean_sd": 5.0, "mean_change": -0.047, "area_loss_gt5m_ha": 8.8}, {"year": 2021, "mean_height": 12.944, "median_height": 11.42, "area_ge_10m_kha": 433.706, "area_ge_20m_kha": 132.853, "mean_sd": 4.865, "mean_change": -0.08, "area_loss_gt5m_ha": 20.72}, {"year": 2022, "mean_height": 12.901, "median_height": 11.45, "area_ge_10m_kha": 436.06, "area_ge_20m_kha": 130.842, "mean_sd": 4.972, "mean_change": -0.043, "area_loss_gt5m_ha": 13.16}, {"year": 2023, "mean_height": 12.873, "median_height": 11.5, "area_ge_10m_kha": 438.971, "area_ge_20m_kha": 128.966, "mean_sd": 4.824, "mean_change": -0.028, "area_loss_gt5m_ha": 22.04}, {"year": 2024, "mean_height": 12.876, "median_height": 11.55, "area_ge_10m_kha": 442.541, "area_ge_20m_kha": 126.984, "mean_sd": 5.048, "mean_change": 0.002, "area_loss_gt5m_ha": 39.04}, {"year": 2025, "mean_height": 12.881, "median_height": 11.58, "area_ge_10m_kha": 445.662, "area_ge_20m_kha": 124.786, "mean_sd": 4.923, "mean_change": 0.006, "area_loss_gt5m_ha": 20.28}], "reference": [{"reference": "GAO 2012 (airborne lidar + upscaling, 1 ha)", "product year": 2017, "cells (100 m)": 749023, "mean difference (m)": 7.30632766808411, "RMSD (m)": 8.53543572945949, "r": 0.8391648861513079}, {"reference": "ETH 2020 (Lang et al., 10 m)", "product year": 2020, "cells (100 m)": 678169, "mean difference (m)": -2.638324250374604, "RMSD (m)": 4.958559574582268, "r": 0.8320923668753292}], "av3": [{"subset": "2025, inside AVIRIS-3 coverage", "model": "AlphaEarth", "sensor": "all", "n": 10494, "rmse": 6.386921617879936, "mae": 4.8505970023187865, "bias": -0.34458702548853526, "r2": 0.6023581811211727, "r": 0.7774207076951747, "slope_obs_on_pred": 1.0393734635660614, "obs_mean": 15.803782224714208}, {"subset": "2025, inside AVIRIS-3 coverage", "model": "AlphaEarth", "sensor": "gedi", "n": 4931, "rmse": 5.993080751271063, "mae": 4.615126692960932, "bias": 0.19286808926507273, "r2": 0.668085936993515, "r": 0.8178192476592596, "slope_obs_on_pred": 1.0250243615318335, "obs_mean": 16.866763325932784}, {"subset": "2025, inside AVIRIS-3 coverage", "model": "AlphaEarth", "sensor": "icesat2", "n": 5563, "rmse": 6.716739942385643, "mae": 5.059316055966742, "bias": -0.8209830655478632, "r2": 0.5286390262291903, "r": 0.7347925311957654, "slope_obs_on_pred": 1.0972198977900571, "obs_mean": 14.861564031273833}, {"subset": "2025, inside AVIRIS-3 coverage", "model": "AlphaEarth + AVIRIS-3", "sensor": "all", "n": 10494, "rmse": 6.372120068756443, "mae": 4.862882111352661, "bias": 0.2941765299366564, "r2": 0.6041990976880445, "r": 0.7778479867140662, "slope_obs_on_pred": 1.0028290939598932, "obs_mean": 15.803782224714208}, {"subset": "2025, inside AVIRIS-3 coverage", "model": "AlphaEarth + AVIRIS-3", "sensor": "gedi", "n": 4931, "rmse": 6.090358643972369, "mae": 4.706996325165228, "bias": 0.8317800151493754, "r2": 0.6572234288022594, "r": 0.8146341733945924, "slope_obs_on_pred": 0.995791507218202, "obs_mean": 16.866763325932784}, {"subset": "2025, inside AVIRIS-3 coverage", "model": "AlphaEarth + AVIRIS-3", "sensor": "icesat2", "n": 5563, "rmse": 6.611840320399992, "mae": 5.001058061683461, "bias": -0.1823510245454426, "r2": 0.5432471476417088, "r": 0.7379023334600275, "slope_obs_on_pred": 1.0425083180656185, "obs_mean": 14.861564031273833}, {"subset": "2025, outside coverage", "model": "AlphaEarth", "sensor": "all", "n": 81072, "rmse": 6.04667893503592, "mae": 4.253065674973029, "bias": -0.25205832944190176, "r2": 0.5246701865676835, "r": 0.7255667677973779, "slope_obs_on_pred": 1.0443884849888645, "obs_mean": 11.82882005369286}, {"subset": "2025, outside coverage", "model": "AlphaEarth", "sensor": "gedi", "n": 24883, "rmse": 5.234210000592724, "mae": 3.9402734235880654, "bias": 0.4517940147352398, "r2": 0.6473013717210152, "r": 0.8062814270568658, "slope_obs_on_pred": 1.0159699804567939, "obs_mean": 12.46775951454677}, {"subset": "2025, outside coverage", "model": "AlphaEarth", "sensor": "icesat2", "n": 56189, "rmse": 6.373473333748, "mae": 4.391584060977622, "bias": -0.5637555990170822, "r2": 0.4677751142583666, "r": 0.6891292798400014, "slope_obs_on_pred": 1.0857145918168272, "obs_mean": 11.545869109479087}, {"subset": "2025, outside coverage", "model": "AlphaEarth + AVIRIS-3", "sensor": "all", "n": 81072, "rmse": 6.056134575970733, "mae": 4.254297441842333, "bias": -0.29791525638012156, "r2": 0.5231824071373405, "r": 0.7249653803520439, "slope_obs_on_pred": 1.0510212937997223, "obs_mean": 11.82882005369286}, {"subset": "2025, outside coverage", "model": "AlphaEarth + AVIRIS-3", "sensor": "gedi", "n": 24883, "rmse": 5.234062201231066, "mae": 3.9380960536377487, "bias": 0.40170734725542656, "r2": 0.6473212898733738, "r": 0.8060461055646289, "slope_obs_on_pred": 1.0223911755210164, "obs_mean": 12.46775951454677}, {"subset": "2025, outside coverage", "model": "AlphaEarth + AVIRIS-3", "sensor": "icesat2", "n": 56189, "rmse": 6.386467446808202, "mae": 4.3943255459676, "bias": -0.6077394078379398, "r2": 0.4656027225763253, "r": 0.6883807009097871, "slope_obs_on_pred": 1.0929306484496801, "obs_mean": 11.545869109479087}], "change_direct": {"all": {"rate_n": 99260, "rate_rmse": 4.46631914155908, "rate_mae": 2.5690485403573287, "rate_bias": -0.07068950332239493, "rate_r2": -0.0061286093501069505, "rate_r": 0.19485505074701967, "rate_slope_obs_on_pred": 0.48201956829055453, "rate_obs_mean": 0.25885525378107477, "delta_rmse": 8.188247359048797, "delta_bias": -0.11886098895118478, "delta_r": 0.16287971559282044, "drop_n": 5945, "drop_recall": 0.0640874684608915, "drop_precision": 0.1506524317912218, "n_pairs": 99260}, "gedi": {"rate_n": 6102, "rate_rmse": 3.9338602461945453, "rate_mae": 2.4699332698133936, "rate_bias": 0.45949292370349765, "rate_r2": -0.022473590508359065, "rate_r": 0.16791109211952143, "rate_slope_obs_on_pred": 0.46702945481069963, "rate_obs_mean": -0.2802995123704638, "delta_rmse": 7.005279413092325, "delta_bias": 1.1847505498370032, "delta_r": 0.13653379065789084, "drop_n": 469, "drop_recall": 0.07036247334754797, "drop_precision": 0.22448979591836735, "n_pairs": 6102}, "icesat2": {"rate_n": 93158, "rate_rmse": 4.498997562203674, "rate_mae": 2.5755407512341084, "rate_bias": -0.10541731166641256, "rate_r2": -0.006337824381933199, "rate_r": 0.19614767042818507, "rate_slope_obs_on_pred": 0.4824967075721506, "rate_obs_mean": 0.2941707648811057, "delta_rmse": 8.259823561008782, "delta_bias": -0.20424965776852222, "delta_r": 0.16453576904101597, "drop_n": 5476, "drop_recall": 0.0635500365230095, "drop_precision": 0.14609571788413098, "n_pairs": 93158}}};</script>
+<script>
+document.addEventListener("DOMContentLoaded", () => {
+  const R = window.RESULTS, V = window.Viz;
+  V.themeToggle(document.getElementById("theme-btn"));
+  V.columns(document.getElementById("fig-labels"), {
+    title: "Quality-screened lidar observations per year", subtitle: "inside the AOI, outliers removed",
+    categories: R.labels_by_year.years.map(String),
+    series: [{name: "GEDI", values: R.labels_by_year.gedi}, {name: "ICESat-2 (30 m)", values: R.labels_by_year.icesat2}],
+    xTitle: "Year", yTitle: "Observations", digits: 0 });
+  for (const [id, key, name] of [["fig-scatter-gedi", "scatter_gedi", "GEDI"], ["fig-scatter-is2", "scatter_icesat2", "ICESat-2 (on GEDI scale)"]]) {
+    V.heatmap(document.getElementById(id), { title: `Held-out ${name} vs. predicted`, subtitle: "spatial-region CV; line = 1:1",
+      xEdges: R[key].edges, yEdges: R[key].edges, z: R[key].z, xTitle: "Predicted (m)", yTitle: "Observed (m)", diag: true });
+  }
+  V.lines(document.getElementById("fig-byclass"), {
+    title: "Error by observed height class", subtitle: "all held-out labels",
+    x: R.by_class.labels.map((_, i) => i), xTicks: R.by_class.labels.map((_, i) => i),
+    xFmt: (i) => R.by_class.labels[i], xUnit: " m",
+    series: [{name: "RMSE (m)", values: R.by_class.rmse}, {name: "Bias, predicted − observed (m)", values: R.by_class.bias}],
+    xTitle: "Observed canopy height (m)", yTitle: "m", hline: 0 });
+  const yrs = R.space_by_year.year;
+  const pick = (o) => o ? yrs.map((y) => { const i = o.year.indexOf(y); return i < 0 ? null : o.rmse[i]; }) : yrs.map(() => null);
+  const ser = [{name: "Spatial-region CV", values: R.space_by_year.rmse}];
+  if (R.base_year_by_year) ser.push({name: "Leave-one-year-out", values: pick(R.base_year_by_year)});
+  if (R.base_spacetime_by_year) ser.push({name: "Space × time", values: pick(R.base_spacetime_by_year)});
+  V.lines(document.getElementById("fig-byyear"), { title: "RMSE by year and CV design", subtitle: "all held-out labels",
+    x: yrs, xTicks: yrs, series: ser, xTitle: "Year", yTitle: "RMSE (m)", xFmt: (v) => String(v) });
+  if (R.reliability) V.lines(document.getElementById("fig-reliability"), {
+    title: "Interval reliability", subtitle: "empirical vs nominal coverage (Gaussian intervals from calibrated SDs); line = ideal",
+    x: R.reliability.nominal, series: [{name: "Empirical coverage", values: R.reliability.empirical}],
+    xTitle: "Nominal coverage", yTitle: "Empirical coverage", diag: true, xMin: 0.4, xMax: 1, yMin: 0.4, yMax: 1 });
+  if (R.product_stats) V.lines(document.getElementById("fig-area"), {
+    title: "Area with tall canopy", subtitle: "final product; thousand hectares",
+    x: R.product_stats.map((d) => d.year), xTicks: R.product_stats.map((d) => d.year), xFmt: (v) => String(v),
+    series: [{name: "Canopy ≥ 10 m", values: R.product_stats.map((d) => d.area_ge_10m_kha)}, {name: "Canopy ≥ 20 m", values: R.product_stats.map((d) => d.area_ge_20m_kha)}],
+    xTitle: "Year", yTitle: "Area (kha)" });
+  if (R.product_stats) V.lines(document.getElementById("fig-stats"), {
+    title: "Mean canopy height across the peninsula", subtitle: "final product, smoothed",
+    x: R.product_stats.map((d) => d.year), xTicks: R.product_stats.map((d) => d.year), xFmt: (v) => String(v),
+    series: [{name: "Mean height (m)", values: R.product_stats.map((d) => d.mean_height)}],
+    xTitle: "Year", yTitle: "Mean canopy height (m)" });
+});
+</script>
+</body>
+</html>

@@ -46,61 +46,61 @@
     opacity.addEventListener("input", () => overlay && overlay.setOpacity(+opacity.value));
     draw();
 
-    // Click: read the pixel from the product COG (HTTP range requests via geotiff.js).
+    // Click: read the pixel values from the product COGs (HTTP range requests via geotiff.js).
     map.on("click", async (ev) => {
       if (!window.GeoTIFF || !window.proj4 || !man.cog) return;
       const y = man.years[+yearInput.value];
       const [E, N] = proj4("EPSG:4326", man.cog.crs_proj4, [ev.latlng.lng, ev.latlng.lat]);
       const popup = L.popup().setLatLng(ev.latlng).setContent("Reading…").openOn(map);
       try {
-        const vals = Object.assign(
-          await readPixel(man.cog.url.replace("{year}", y), E, N),
-          await readPixel(man.cog.change_url.replace("{year}", y), E, N));
+        const v = {};
+        for (const k of Object.keys(man.cog.files)) {
+          if (k === "change" && y === man.years[0]) { v[k] = null; continue; }
+          v[k] = await readPixel(man.cog.files[k].replace("{year}", y), E, N,
+                                 man.cog.scale[k], man.cog.nodata[k]);
+        }
         const div = document.createElement("div");
         const t = document.createElement("strong");
         t.textContent = `${y} · ${E.toFixed(0)} E, ${N.toFixed(0)} N (UTM 17N)`;
         div.appendChild(t);
-        if (vals.height === null) {
-          const d = document.createElement("div"); d.textContent = "No data (outside AOI or water)"; div.appendChild(d);
+        const f = (x, d) => (x === null || x === undefined ? "–" : x.toFixed(d));
+        const lines = [];
+        if (v.height === null) {
+          lines.push(["", "No data (outside the AOI or water)"]);
         } else {
-          const f = (v, d) => (v === null || v === undefined ? "–" : v.toFixed(d));
-          for (const [a, v] of [
-            ["Canopy height", `${f(vals.height, 1)} m`],
-            ["90% interval", `${f(vals.lower90, 1)}–${f(vals.upper90, 1)} m`],
-            ["Change vs. previous year", `${f(vals.change, 1)} ± ${f(vals.change_sd, 1)} m`],
-            ["Quality flag", f(vals.flag, 0)],
-          ]) { const d = document.createElement("div"); d.textContent = `${a}: ${v}`; div.appendChild(d); }
+          const z = 1.645;
+          lines.push(["Canopy height", `${f(v.height, 1)} m`]);
+          if (v.sd !== null) lines.push(["90% interval", `${f(Math.max(v.height - z * v.sd, 0), 1)}–${f(v.height + z * v.sd, 1)} m`]);
+          if (v.change !== null) {
+            const csd = changeSD(v.height);
+            lines.push(["Change vs. previous year", `${f(v.change, 1)} m (± ${f(csd, 1)} m, 1 SD)`]);
+          }
+          if (man.flags && man.flags[y] !== undefined) lines.push(["Quality flag", String(man.flags[y])]);
         }
+        for (const [a, b] of lines) { const d = document.createElement("div"); d.textContent = a ? `${a}: ${b}` : b; div.appendChild(d); }
         popup.setContent(div);
       } catch (e) {
         popup.setContent("Could not read the product file.");
       }
     });
+
+    function changeSD(h) {
+      for (const b of man.change_sd || []) if (h >= b.lo && h < b.hi) return b.sd;
+      return null;
+    }
   }
 
   const tiffs = {};
-  async function readPixel(url, E, N) {
+  async function readPixel(url, E, N, scale, nodata) {
     if (!tiffs[url]) tiffs[url] = GeoTIFF.fromUrl(url).then((t) => t.getImage());
     const img = await tiffs[url];
     const [x0, y1] = img.getOrigin();
     const [rx, ry] = img.getResolution();
     const c = Math.floor((E - x0) / rx), r = Math.floor((N - y1) / ry);
-    const out = {};
-    const desc = man_desc[url.includes("_change") ? "change" : "main"];
-    if (c < 0 || r < 0 || c >= img.getWidth() || r >= img.getHeight()) {
-      desc.forEach((d) => { out[d.name] = null; });
-      return out;
-    }
+    if (c < 0 || r < 0 || c >= img.getWidth() || r >= img.getHeight()) return null;
     const ras = await img.readRasters({ window: [c, r, c + 1, r + 1] });
-    desc.forEach((d, i) => {
-      const v = ras[i][0];
-      out[d.name] = v === d.nodata ? null : v * d.scale;
-    });
-    return out;
+    const val = ras[0][0];
+    return val === nodata ? null : val * scale;
   }
-  let man_desc = null;
-  document.addEventListener("DOMContentLoaded", async () => {
-    try { man_desc = (await (await fetch("data/map/manifest.json")).json()).cog.bands; } catch (e) { /* no map */ }
-  });
   document.addEventListener("DOMContentLoaded", init);
 })();
