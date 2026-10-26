@@ -96,3 +96,55 @@ def calibrate(oof: pd.DataFrame, name: str) -> dict:
             "width_raw": float(np.mean(hi - lo)), "width_crossfit": float(np.mean(hi2 - lo2))}
     (out_dir / "summary.json").write_text(json.dumps(summ, indent=2))
     return summ
+
+
+CHANGE_BINS = [-np.inf, 5, 10, 15, 20, 25, np.inf]
+
+
+def calibrate_change_sd(name: str, grid: str, max_dt: float = 1.5) -> pd.DataFrame:
+    """Empirical SD of the predicted 1-year height change, by canopy-height bin.
+
+    Uses held-out same-sensor lidar pairs (both sensors) 0.75-1.5 yr apart, scored on the
+    smoothed standardized (panel) predictions. For each pair the rate error
+    e = rate_pred - rate_obs has Var(e) = var_model + (s1^2 + s2^2) / dt^2, where s1, s2 are
+    the class-specific label-noise SDs, so the model's annual-change SD is
+    sqrt(mean(e^2) - mean((s1^2 + s2^2) / dt^2)).
+    """
+    from .config import data_path
+    from .experiment import smooth_panel
+    from .metrics import change_pairs
+
+    years = load_config()["years"]
+    oof = pd.read_parquet(data_path("cv", name, "oof.parquet"))
+    panel = pd.read_parquet(data_path("cv", name, "panel.parquet"))
+    sm = smooth_panel(panel, years)
+    keys = [f"row_{grid}", f"col_{grid}", "year"]
+    d = oof.merge(sm.rename(columns={"row": keys[0], "col": keys[1]}), on=keys, how="left")
+    d = d.assign(pred=d.pred_smooth)
+    d = d[np.isfinite(d.pred)]
+    p = change_pairs(d, max_dt=max_dt)
+    sig = d.set_index("obs_id").sigma
+    e2 = (p.rate_pred - p.rate_obs) ** 2
+    noise = (sig.loc[p.obs1].to_numpy() ** 2 + sig.loc[p.obs2].to_numpy() ** 2) / p.dt ** 2
+    p["hbin"] = pd.cut((p.p1 + p.p2) / 2, CHANGE_BINS, labels=False)
+    rows = []
+    for k in range(len(CHANGE_BINS) - 1):
+        m = (p.hbin == k).to_numpy()
+        v = float(np.mean(e2[m]) - np.mean(noise[m])) if m.sum() > 30 else np.nan
+        rows.append({"bin": k, "lo_edge": CHANGE_BINS[k], "hi_edge": CHANGE_BINS[k + 1],
+                     "n_pairs": int(m.sum()), "change_sd": float(np.sqrt(max(v, 0.25)))
+                     if np.isfinite(v) else np.nan})
+    out = pd.DataFrame(rows)
+    out["change_sd"] = out.change_sd.fillna(out.change_sd.median())
+    out.to_csv(results_dir("uncertainty", name) / "change_sd.csv", index=False)
+    return out
+
+
+def change_sd_lookup(name: str, height: np.ndarray) -> np.ndarray:
+    t = pd.read_csv(results_path("uncertainty", name, "change_sd.csv"))
+    b = pd.cut(height, CHANGE_BINS, labels=False)
+    vals = t.set_index("bin").change_sd.reindex(range(len(CHANGE_BINS) - 1)).to_numpy()
+    out = np.full(height.shape, np.nan)
+    ok = np.isfinite(b)
+    out[ok] = vals[b[ok].astype(int)]
+    return out

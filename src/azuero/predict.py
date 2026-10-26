@@ -4,9 +4,9 @@
 2. For each year, predict the point estimate and raw 5/95 % quantiles tile by tile.
 3. Apply the conformal (CQR) offsets estimated from the spatial-CV out-of-fold
    predictions to get calibrated 90 % intervals, then convert them to SDs.
-4. Optionally run the robust Kalman smoother over each pixel's annual series to
-   enforce temporal consistency. This yields smoothed heights, SDs, annual change
-   and change SDs.
+4. Optionally run the robust Kalman smoother over each pixel's annual series for
+   temporal consistency (smoothed heights and annual change). Height SDs are the
+   conformal predictive SDs; change SDs are empirical, from held-out lidar pairs.
 5. Write full-precision GeoTIFFs (data/product) and compact COGs for the website.
 
 Quality flag: 0 = lidar years (2019-2025), 1 = partial-lidar year (2018),
@@ -32,8 +32,8 @@ from .experiment import Experiment, prepare
 from .features import stack_window
 from .grid import get_grid
 from .models import get_model
-from .temporal import SmootherParams, change_sd, smooth
-from .uncertainty import apply_offsets
+from .temporal import SmootherParams, smooth
+from .uncertainty import apply_offsets, change_sd_lookup
 
 log = logging.getLogger(__name__)
 
@@ -169,19 +169,20 @@ def finalize(name: str, grid_name: str, cqr_name: str, smooth_series: bool = Tru
             dH = np.full_like(P, np.nan)
             dS = np.full_like(P, np.nan)
             if smooth_series and any_ok.any():
-                # The smoother treats annual predictions as observations of the latent
-                # height with the model's error variance (lidar noise removed).
-                s_model = np.sqrt(np.maximum(sd_obs[any_ok] ** 2 - gedi_sigma ** 2, 1.0))
-                h_s, sd_s, g_s, Ps, lag = smooth(P[any_ok], s_model, params or SmootherParams.from_config(),
-                                                 return_cov=True)
+                # Same inputs as evaluated in CV (experiment.smooth_panel): raw quantile SDs
+                # with the tuned r_scale.
+                s_raw = np.clip((U[any_ok] - L[any_ok]) / (2 * z), 0.5, None)
+                h_s, _, _ = smooth(P[any_ok], s_raw, params or SmootherParams.from_config())
                 H[any_ok] = h_s
-                # Report intervals for a GEDI-equivalent measurement: add lidar noise back.
-                S[any_ok] = np.sqrt(sd_s ** 2 + gedi_sigma ** 2)
                 dH[any_ok, 1:] = np.diff(h_s, axis=1)
-                dS[any_ok] = change_sd(Ps, lag)
             else:
                 dH[:, 1:] = np.diff(P, axis=1)
-                dS[:, 1:] = np.sqrt(sd_obs[:, 1:] ** 2 + sd_obs[:, :-1] ** 2)
+            # Height uncertainty: the conformal (CV-calibrated) predictive SD of each year's
+            # prediction. The smoother's posterior SD is not used because annual prediction
+            # errors at a pixel are strongly correlated across years, which it cannot see.
+            # Change uncertainty: empirical 1-year change SD by height class from held-out
+            # lidar pairs (uncertainty.calibrate_change_sd).
+            dS[:, 1:] = change_sd_lookup(cqr_name, H[:, 1:])
             for t, y in enumerate(years):
                 flag = np.where(y in lidar_years, 0 if y >= 2019 else 1, 2)
                 fl = np.full(P.shape[0], flag, np.float32)
@@ -190,8 +191,9 @@ def finalize(name: str, grid_name: str, cqr_name: str, smooth_series: bool = Tru
                 arr = np.stack([H_t, np.clip(H_t - z * S[:, t], 0, None), H_t + z * S[:, t],
                                 S[:, t], dH[:, t], dS[:, t], fl]).reshape(len(bands), h, w)
                 arr[:, ~np.isfinite(P[:, t]).reshape(h, w) & ~any_ok.reshape(h, w)] = np.nan
-                q = np.where(np.isfinite(arr), np.round(arr / PRODUCT_SCALE), PRODUCT_NODATA)
-                dsts[y].write(np.clip(q, -32767, 32767).astype(np.int16), window=win)
+                q = np.where(np.isfinite(arr),
+                             np.clip(np.round(arr / PRODUCT_SCALE), -32767, 32767), PRODUCT_NODATA)
+                dsts[y].write(q.astype(np.int16), window=win)
     finally:
         for d in dsts.values():
             d.close()
