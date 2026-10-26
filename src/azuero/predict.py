@@ -103,7 +103,12 @@ def predict_year(bundle: dict, exp: Experiment, year: int, force: bool = False) 
             sub = mask[r0:r0 + h, c0:c0 + w]
             block = np.full((3, h, w), np.nan, np.float32)
             if sub.any():
-                X, names = stack_window(exp.grid, [s for s in exp.sets if s != "obs"], year, win)
+                # The time feature is held at the start of the GEDI era for earlier years:
+                # before 2019 only late-2018 ICESat-2 labels exist, so mid-year 2017/2018 on
+                # the GEDI standard would fall in tree leaves fitted to no comparable data.
+                t_val = max(year + 0.5, load_config()["model"].get("t_min_predict", -np.inf))
+                X, names = stack_window(exp.grid, [s for s in exp.sets if s != "obs"], year, win,
+                                        t_value=t_val)
                 Xd = pd.DataFrame(X, columns=names)
                 if exp.obs_covariates:
                     Xd["is_icesat2"], Xd["night"], Xd["strong"] = 0.0, 1.0, 1.0

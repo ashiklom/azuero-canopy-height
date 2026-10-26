@@ -143,7 +143,7 @@ def panel_predict(model, exp: Experiment, test_lab: pd.DataFrame, columns, years
     for y in years:
         d = cells.copy()
         d["year"] = y
-        d["t"] = y + 0.5
+        d["t"] = max(y + 0.5, load_config()["model"].get("t_min_predict", -np.inf))
         d["obs_id"] = -1
         frames.append(d)
     panel = pd.concat(frames, ignore_index=True)
